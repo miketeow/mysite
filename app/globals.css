@@ -43,6 +43,17 @@
   --radius-xl: calc(var(--radius) + 4px);
 }
 
+@utility container {
+  /* Auto Centering, shorthand for margin-left + margin-right */
+  margin-inline: auto;
+  /* Default padding, consistent with margin-inline (mobile) */
+  padding-inline: 1rem;
+  /* responsive-padding (tablet and desktop) */
+  @media (min-width: theme(--breakpoint-md)) {
+    padding-inline: 2rem;
+  }
+}
+
 :root {
   --radius: 0.625rem;
 
