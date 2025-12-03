@@ -1,0 +1,22 @@
+---
+title: "Rusty-Clean: CLI File Organizer"
+publishedAt: "2024-11-10"
+description: "A blazingly fast command-line tool written in Rust that organizes messy directories by moving files into folders based on their extension."
+tags: ["rust", "cli", "systems"]
+repositoryUrl: "https://github.com/miketeow/rusty-clean"
+techStack: ["Rust", "Clap", "Tokio"]
+---
+
+# Why Rust?
+
+I previously wrote this script in Python, but it was slow when processing directories with 10,000+ files. Rust's zero-cost abstractions made this version run almost instantly.
+
+# Usage
+
+```bash
+cargo install rusty-clean
+rusty-clean --path ./Downloads --dry-run
+```
+
+## Challenges
+The hardest part was handling Concurrency. I used Rayon to parallelize the file moving operations, which cut the execution time by 40% on multi-core machines.

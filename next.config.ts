@@ -4,6 +4,15 @@ import createMDX from "@next/mdx";
 
 const nextConfig: NextConfig = {
   /* config options here */
+
+  turbopack: {
+    rules: {
+      "*.svg": {
+        loaders: ["@svgr/webpack"],
+        as: "*.js",
+      },
+    },
+  },
   pageExtensions: ["ts", "tsx", "js", "jsx", "mdx"],
 };
 

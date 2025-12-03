@@ -1,0 +1,35 @@
+---
+title: "E-commerce Microservices API"
+publishedAt: "2024-05-05"
+description: "A scalable backend API for an online store. Handles authentication, inventory management, and payment processing via Webhooks."
+tags: ["backend", "api", "docker", "rust"]
+repositoryUrl: "https://github.com/miketeow/ecom-api"
+techStack: ["Node.js", "Express", "Docker", "Redis", "PostgreSQL"]
+---
+
+# Architecture
+
+This project is designed as a modular monolith that can be split into microservices.
+
+## Key Features
+* **Auth:** JWT-based authentication with Refresh Tokens.
+* **Caching:** Redis is used to cache product details, reducing DB load by 80%.
+* **Rate Limiting:** Custom middleware to prevent abuse.
+
+# Deployment
+
+The entire stack is containerized using Docker Compose for easy local development.
+
+```yaml
+services:
+  api:
+    build: .
+    ports:
+      - "3000:3000"
+  redis:
+    image: redis:alpine
+```
+
+### 🔍 How to Test
+1.  Navigate to `http://localhost:3000/projects`.
+2.  (Note: You might see a 404 if you haven't built the `app/projects/page.tsx` list page yet, but the files are now ready to be read!)

@@ -12,7 +12,7 @@ export function Header() {
   const pathname = usePathname();
   return (
     <header className="bg-background/75 fixed inset-x-0 top-0 z-50 py-4 backdrop-blur-md">
-      <nav className="container flex max-w-5xl items-center justify-between">
+      <nav className="container flex max-w-6xl items-center justify-between">
         <div>
           <Link
             href="/"

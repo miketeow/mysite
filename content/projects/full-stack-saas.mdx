@@ -1,0 +1,30 @@
+---
+title: "KanbanPro: Task Management SaaS"
+publishedAt: "2024-08-20"
+description: "A collaborative Kanban board with real-time updates. Supports drag-and-drop, team workspaces, and dark mode."
+tags: ["react", "saas", "fullstack"]
+repositoryUrl: "https://github.com/miketeow/kanban-pro"
+liveUrl: "https://kanban-pro-demo.vercel.app"
+techStack: ["Next.js", "Supabase", "Drizzle ORM", "Stripe"]
+---
+
+# Real-Time Sync
+
+The core feature of this app is real-time collaboration. I used **Supabase Realtime** (Postgres Changes) to listen for database updates.
+
+When User A moves a card:
+1.  Update is sent to Supabase.
+2.  Supabase broadcasts the change.
+3.  User B's UI updates instantly without refreshing.
+
+# Database Schema
+
+I used Drizzle ORM for type-safe database queries.
+
+```typescript
+export const tasks = pgTable('tasks', {
+  id: serial('id').primaryKey(),
+  title: text('title').notNull(),
+  status: text('status').default('todo'),
+});
+```

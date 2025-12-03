@@ -1,0 +1,32 @@
+---
+title: "Minimalist Developer Portfolio"
+publishedAt: "2025-01-15"
+description: "A high-performance personal website built with Next.js 16, Tailwind CSS, and MDX. Features a custom content collection engine and a clean, typography-focused design."
+tags: ["nextjs", "typescript", "design"]
+repositoryUrl: "https://github.com/miketeow/portfolio"
+liveUrl: "https://miketeow.com"
+techStack: ["Next.js 16", "Tailwind CSS", "MDX", "Shadcn UI"]
+---
+
+# The Goal
+
+I wanted a place to document my learning journey that didn't feel like a generic template. It needed to be:
+1.  **Fast:** 100/100 Lighthouse score.
+2.  **Maintainable:** Content lives in Markdown files, not a database.
+3.  **Type-Safe:** Fully typed with TypeScript.
+
+# Architecture
+
+I decided to split the content into two collections: `blog` and `projects`.
+
+## The Content Engine
+
+Instead of using `contentlayer` (which is now unmaintained), I built a lightweight wrapper around the native Node.js filesystem API.
+
+```ts
+// lib/mdx.ts
+export function getProjects() {
+  // Reads files from content/projects directory
+}
+```
+This allows me to have complete control over how my data is parsed and sorted.
