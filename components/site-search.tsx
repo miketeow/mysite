@@ -31,7 +31,7 @@ export default function SiteSearch({ data }: { data: SearchProps[] }) {
   // toggle with key (cmd + k)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.key === "k" && e.metaKey) || e.ctrlKey) {
+      if (e.code === "KeyK" && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
         setOpen((open) => !open);
       }
