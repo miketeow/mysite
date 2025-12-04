@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 
 import fs from "fs";
 import matter from "gray-matter";
+import { Calendar, Hash, User } from "lucide-react";
 import { MDXRemote } from "next-mdx-remote/rsc";
 import path from "path";
 
@@ -52,29 +53,40 @@ export default async function BlogPostPage({ params }: { params: Params }) {
 
   return (
     <article>
-      <div className="mb-8 border-b border-gray-200 pb-8">
-        <SectionTitle as="h1" className="mb-4">
+      <div className="border-border mb-10 border-b pb-10">
+        <SectionTitle as="h1" className="mb-6 text-2xl wrap-break-word">
           {data.title}
         </SectionTitle>
-        <div className="flex flex-col gap-4">
+
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           {/* author and date */}
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-            <span>{data.author}</span>
-            <span>•</span>
-            <time dateTime={data.publishedAt}>
-              {formatDate(data.publishedAt)}
-            </time>
+            {/* author */}
+            <div className="flex items-center gap-2">
+              <User className="size-4" />
+              <span className="text-foreground font-medium">{data.author}</span>
+            </div>
 
-            {/* conditional update date */}
-            {data.updatedAt && (
-              <>
-                <span className="hidden sm:inline">•</span>
-                <time dateTime={data.updatedAt}>
-                  Last Updated: {formatDate(data.updatedAt)}
-                </time>
-              </>
-            )}
+            <span className="text-muted-foreground/30 hidden sm:inline-block">
+              |
+            </span>
+
+            {/* date */}
+            <div className="flex items-center gap-2">
+              <Calendar className="size-4" />
+              <time dateTime={data.publishedAt}>
+                {formatDate(data.publishedAt)}
+              </time>
+
+              {/* conditional update date */}
+              {data.updatedAt && (
+                <div className="bg-muted flex items-center gap-1 rounded-full px-2 py-0.5 text-xs">
+                  <span>Last Updated: {formatDate(data.updatedAt)}</span>
+                </div>
+              )}
+            </div>
           </div>
+          {/* tags */}
 
           <div className="flex flex-wrap gap-2">
             {data.tags &&
@@ -84,8 +96,10 @@ export default async function BlogPostPage({ params }: { params: Params }) {
                   key={tag}
                   className={badgeVariants({
                     variant: "tag",
+                    className: "px-2 py-0.5 text-xs font-normal capitalize",
                   })}
                 >
+                  <Hash className="mr-1 size-3 opacity-50" />
                   {tag}
                 </Link>
               ))}
