@@ -1,3 +1,5 @@
+import OnThisPage from "@/components/on-this-page";
+
 export default function BlogPostLayout({
   children,
 }: {
@@ -13,15 +15,7 @@ export default function BlogPostLayout({
         {/* On this page */}
         <aside className="order-1 lg:order-2 lg:col-span-3">
           <div className="lg:sticky lg:top-32">
-            {/* placeholder for component */}
-            <div className="mb-4">
-              <h3 className="mb-2 text-sm font-semibold tracking-wider text-gray-900 uppercase">
-                On This Page
-              </h3>
-              <p className="text-sm text-gray-500 italic">
-                (Table of contents coming soon...)
-              </p>
-            </div>
+            <OnThisPage />
           </div>
         </aside>
       </div>
