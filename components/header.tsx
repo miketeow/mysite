@@ -1,19 +1,42 @@
-"use client";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
 
-import { navLinks } from "@/lib/constants";
-import { cn } from "@/lib/utils";
+import { getBlogPosts, getProjects } from "@/lib/mdx";
 
+import MainNav from "./main-nav";
 import MobileNav from "./mobile-nav";
+import SiteSearch from "./site-search";
 import { ThemeToggle } from "./theme-toggle";
 
 export function Header() {
-  const pathname = usePathname();
+  // fetch data
+  const blogPosts = getBlogPosts();
+  const projects = getProjects();
+
+  // transform data (lightweight payload for client)
+  // don't pass the entire mdx content to search bar
+
+  const searchIndex = [
+    ...blogPosts.map((post) => ({
+      title: post.metadata.title,
+      slug: `/blog/${post.slug}`,
+      description: post.metadata.description,
+      type: "Blog" as const,
+    })),
+    ...projects.map((project) => ({
+      title: project.metadata.title,
+      slug: `/project/${project.slug}`,
+      description: project.metadata.description,
+      type: "Project" as const,
+    })),
+  ];
+
   return (
     <header className="bg-background/75 fixed inset-x-0 top-0 z-50 py-4 backdrop-blur-md">
-      <nav className="container flex max-w-6xl items-center justify-between">
-        <div>
+      <div className="container flex max-w-6xl items-center justify-between">
+        {/* left side: logo and main nav */}
+        <MainNav />
+        {/* mobile logo fallback */}
+        <div className="md:hidden">
           <Link
             href="/"
             className="font-serif text-2xl font-bold tracking-tight"
@@ -22,33 +45,15 @@ export function Header() {
           </Link>
         </div>
 
-        {/* Desktop Navigation */}
-        <ul className="hidden items-center gap-8 text-sm font-medium md:flex">
-          {navLinks.map((link) => {
-            const isActive = pathname === link.href;
-            return (
-              <li key={link.name}>
-                <Link
-                  href={link.href}
-                  className={cn(
-                    "hover:text-primary transition-colors duration-200",
-                    isActive
-                      ? "text-foreground font-semibold"
-                      : "text-muted-foreground"
-                  )}
-                >
-                  {link.name}
-                </Link>
-              </li>
-            );
-          })}
-        </ul>
-
-        <div className="flex items-center gap-4">
-          <MobileNav />
-          <ThemeToggle />
+        {/* right side: search, theme, mobile menu */}
+        <div className="flex items-center gap-2 md:gap-4">
+          <SiteSearch data={searchIndex} />
+          <div className="flex shrink-0 items-center gap-2">
+            <ThemeToggle />
+            <MobileNav />
+          </div>
         </div>
-      </nav>
+      </div>
     </header>
   );
 }

@@ -36,7 +36,7 @@ const MobileNav = () => {
 
           <div
             onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-            className="mobile-nav"
+            className="mobile-nav cursor-pointer"
           >
             {theme === "dark" ? (
               <span>Dark Mode</span>
