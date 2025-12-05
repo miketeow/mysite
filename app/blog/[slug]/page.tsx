@@ -6,14 +6,25 @@ import matter from "gray-matter";
 import { Calendar, Hash, User } from "lucide-react";
 import { MDXRemote } from "next-mdx-remote/rsc";
 import path from "path";
+import rehypePrettyCode from "rehype-pretty-code";
 
 import { SectionTitle } from "@/components/section-title";
 import { badgeVariants } from "@/components/ui/badge";
+import { rehypeCopyLinked } from "@/lib/rehype-copy-plugin";
 import { formatDate } from "@/lib/utils";
+import { useMDXComponents } from "@/mdx-components";
 
 const BLOG_DIR = path.join(process.cwd(), "content/blog");
 
 type Params = Promise<{ slug: string }>;
+
+const options = {
+  theme: {
+    dark: "github-dark-dimmed",
+    light: "github-light",
+  },
+  keepBackground: true,
+};
 
 // next js Static Site Generation
 export async function generateStaticParams() {
@@ -109,7 +120,15 @@ export default async function BlogPostPage({ params }: { params: Params }) {
 
       {/* MDX Content */}
       <div className="prose prose-slate prose-headings:font-semibold prose-a:text-blue-600 dark:prose-invert max-w-none pb-20 lg:pb-[80vh]">
-        <MDXRemote source={content} />
+        <MDXRemote
+          source={content}
+          components={useMDXComponents()}
+          options={{
+            mdxOptions: {
+              rehypePlugins: [rehypeCopyLinked, [rehypePrettyCode, options]],
+            },
+          }}
+        />
       </div>
     </article>
   );

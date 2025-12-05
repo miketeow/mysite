@@ -1,0 +1,213 @@
+---
+title: "Style Test: A Comprehensive Markdown Showcase"
+publishedAt: "2025-10-27"
+description: "A post specifically designed to test typography, links, blockquotes, and syntax highlighting across multiple languages."
+tags: ["testing", "design", "typography", "code"]
+author: "Admin"
+---
+
+# Introduction
+
+This is a post created for the sole purpose of **testing our new markdown styling**. We will go through various common elements to ensure everything looks as expected.
+
+Let's start with some basic text formatting. This is a standard paragraph. We can have *italic text* for emphasis, or **bold text** for stronger emphasis. Sometimes you might even need ~~strikethrough text~~.
+
+## Headings
+
+We should also test our heading hierarchy.
+
+### H3 Heading
+This is a subsection. It should be smaller than an H2.
+
+#### H4 Heading
+This is an even smaller section, useful for deep nesting.
+
+---
+
+## Links
+
+Here we test the different behaviors of our custom link component.
+
+### Internal Links
+This is a link to another page within our own website, like an [About Page](/about) or another blog post. It should navigate via client-side routing without a full page reload.
+
+### Anchor Links
+This is a link to a specific section on this very page. Let's jump down to the [Conclusion](#conclusion) at the bottom. It should scroll smoothly to that section.
+
+### External Links
+This is a link to an external website, like [Google](https://google.com) or [GitHub](https://github.com). It should automatically open in a **new tab** and have `rel="noopener noreferrer"` for security.
+
+---
+
+## Blockquotes and Lists
+
+Sometimes we want to quote someone or highlight a specific block of text.
+
+> "The only way to do great work is to love what you do."
+>
+> — Steve Jobs
+
+We can even have nested blockquotes:
+
+> This is the outer quote.
+>
+> > And this is a nested quote inside it. This helps test our border and padding styles for deeper levels.
+
+### Lists
+
+Here is an unordered list:
+* Item one
+* Item two
+    * Nested item A
+    * Nested item B
+* Item three
+
+And an ordered list:
+1.  First step
+2.  Second step
+3.  Final step
+
+---
+
+## Code Blocks
+
+This is the most important part. We need to verify that our syntax highlighting works correctly across different programming languages, and that our copy button is functional.
+
+### JavaScript
+
+A simple JavaScript snippet demonstrating DOM manipulation and an event listener.
+
+```javascript
+// Select an element
+const button = document.querySelector('#my-button');
+
+/**
+ * Handles the click event.
+ * @param {Event} event - The click event.
+ */
+function handleClick(event) {
+  event.preventDefault();
+  console.log('Button clicked!', event.target);
+
+  const message = "Hello, world!";
+  alert(message);
+}
+
+// Add the listener
+if (button) {
+  button.addEventListener('click', handleClick);
+}
+```
+
+### TypeScript
+Here we test TypeScript-specific syntax like interfaces, type annotations, and generics.
+
+
+```ts
+interface User {
+  id: number;
+  username: string;
+  isAdmin?: boolean; // Optional property
+}
+
+function getUser<T extends User>(users: T[], id: number): T | undefined {
+  return users.find(user => user.id === id);
+}
+
+const users: User[] = [
+  { id: 1, username: 'alice', isAdmin: true },
+  { id: 2, username: 'bob' },
+];
+
+const user = getUser(users, 1);
+
+if (user) {
+  console.log(`Found user: ${user.username.toUpperCase()}`);
+}
+```
+
+### Rust
+
+Rust has a unique syntax with macros, lifetimes, and specific keywords.
+
+```rust
+#[derive(Debug)]
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+impl Point {
+    // A static method (associated function)
+    fn new(x: i32, y: i32) -> Self {
+        Self { x, y }
+    }
+
+    // A method that borrows self
+    fn distance_from_origin(&self) -> f64 {
+        let sum_squares = (self.x.pow(2) + self.y.pow(2)) as f64;
+        sum_squares.sqrt()
+    }
+}
+
+fn main() {
+    let p = Point::new(3, 4);
+    println!("Created point: {:?}", p);
+    println!("Distance from origin: {:.2}", p.distance_from_origin());
+
+    let message = String::from("Hello from Rust!");
+    // Test a closure
+    let print_message = || println!("{}", message);
+    print_message();
+}
+```
+
+### C
+
+Finally, a classic C example to test low-level language highlighting, including preprocessor directives, pointers, and standard library functions.
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+
+// A simple struct
+typedef struct {
+    int x;
+    int y;
+} Point;
+
+// Function that takes a pointer to a struct
+void print_point(Point *p) {
+    if (p == NULL) {
+        return;
+    }
+    printf("Point at (%d, %d)\n", p->x, p->y);
+}
+
+int main(int argc, char *argv[]) {
+    printf("Hello, World! Program name: %s\n", argv[0]);
+
+    // Allocate memory for a point
+    Point *p1 = (Point *)malloc(sizeof(Point));
+    if (p1 == NULL) {
+        fprintf(stderr, "Memory allocation failed\n");
+        return 1;
+    }
+
+    p1->x = 10;
+    p1->y = 20;
+
+    print_point(p1);
+
+    // Free the allocated memory
+    free(p1);
+    p1 = NULL;
+
+    return 0;
+}
+```
+
+## Conclusion
+This concludes our style test post. If you clicked the anchor link above, you should have landed right here. We have covered typography, different types of links, blockquotes, lists, and code blocks in four different languages.
+
+Check the rendered page to ensure all styles are applied correctly!

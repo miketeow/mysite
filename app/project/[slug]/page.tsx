@@ -6,16 +6,27 @@ import matter from "gray-matter";
 import { Calendar, Globe, Hash, Layers } from "lucide-react";
 import { MDXRemote } from "next-mdx-remote/rsc";
 import path from "path";
+import rehypePrettyCode from "rehype-pretty-code";
 
 import OnThisPage from "@/components/on-this-page";
 import { SectionTitle } from "@/components/section-title";
 import { badgeVariants } from "@/components/ui/badge";
+import { rehypeCopyLinked } from "@/lib/rehype-copy-plugin";
 import { formatDate } from "@/lib/utils";
+import { useMDXComponents } from "@/mdx-components";
 import GithubIcon from "@/public/github.svg";
 
 const PROJECT_DIR = path.join(process.cwd(), "content/projects");
 
 type Params = Promise<{ slug: string }>;
+
+const options = {
+  theme: {
+    dark: "github-dark-dimmed",
+    light: "github-light",
+  },
+  keepBackground: true,
+};
 
 // next js Static Site Generation
 export async function generateStaticParams() {
@@ -81,7 +92,7 @@ export default async function ProjectPostPage({ params }: { params: Params }) {
                 href={data.repositoryUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="bg-background hover:bg-muted inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium transition-colors"
+                className="bg-muted hover:bg-accent inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium transition-colors"
               >
                 <GithubIcon className="h-4 w-4" />
                 Source
@@ -160,7 +171,18 @@ export default async function ProjectPostPage({ params }: { params: Params }) {
         {/* MDX Content */}
         <div className="order-2 lg:order-1 lg:col-span-9">
           <article className="prose prose-slate prose-headings:font-semibold prose-a:text-blue-600 dark:prose-invert max-w-none pb-20 lg:pb-[80vh]">
-            <MDXRemote source={content} />
+            <MDXRemote
+              source={content}
+              components={useMDXComponents()}
+              options={{
+                mdxOptions: {
+                  rehypePlugins: [
+                    rehypeCopyLinked,
+                    [rehypePrettyCode, options],
+                  ],
+                },
+              }}
+            />
           </article>
         </div>
 
