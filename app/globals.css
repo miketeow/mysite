@@ -44,11 +44,8 @@
 }
 
 @utility container {
-  /* Auto Centering, shorthand for margin-left + margin-right */
   margin-inline: auto;
-  /* Default padding, consistent with margin-inline (mobile) */
   padding-inline: 1rem;
-  /* responsive-padding (tablet and desktop) */
   @media (min-width: theme(--breakpoint-md)) {
     padding-inline: 2rem;
   }
@@ -57,109 +54,119 @@
 :root {
   --radius: 0.625rem;
 
-  /* LIGHT MODE: Modern Newsprint */
-  /* Background: Very Light Fog Gray (Not White) */
-  --background: oklch(0.97 0 0);
-  /* Text: Soft Charcoal (Not pure black) */
-  --foreground: oklch(0.145 0 0);
+  /* --- LIGHT MODE: Cloud Elegance Theme --- */
 
-  /* Cards: Pure White to pop against the gray background */
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
+  /* Background: PANTONE 11-4201 Cloud Dancer */
+  /* A very soft, warm off-white. */
+  --background: oklch(0.942 0.005 84.5);
 
-  /* Primary: Solid Black for high contrast buttons */
-  --primary: oklch(0.1 0 0);
-  --primary-foreground: oklch(0.985 0 0);
+  /* Foreground: PANTONE 17-5800 Hematite */
+  /* A deep, grounded gray-brown for text. */
+  --foreground: oklch(0.28 0.02 85);
 
-  /* Secondary: Light Gray */
-  --secondary: oklch(0.92 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
+  /* Card: Slightly lighter/cleaner version of Cloud Dancer to pop */
+  --card: oklch(0.97 0.002 84.5);
+  --card-foreground: oklch(0.28 0.02 85);
+  --popover: oklch(0.97 0.002 84.5);
+  --popover-foreground: oklch(0.28 0.02 85);
 
-  /* Muted: Slightly darker than background for "disabled" or "subtle" areas */
-  --muted: oklch(0.967 0.001 286.375);
-  --muted-foreground: oklch(0.552 0.016 285.938);
+  /* Primary: PANTONE 19-1558 Scarlet Smile */
+  /* Used for main buttons. High Chroma (0.16) makes it vibrant. */
+  --primary: oklch(0.48 0.16 23);
+  --primary-foreground: oklch(0.98 0 0);
 
-  /* Accent: Used for Hovers (Needs to be visible against bg) */
-  --accent: oklch(0.92 0 0);
-  --accent-foreground: oklch(0.205 0 0);
+  /* Secondary: PANTONE 15-3909 Cosmic Sky */
+  /* A muted purple-blue for secondary actions. */
+  --secondary: oklch(0.7 0.06 280);
+  --secondary-foreground: oklch(0.2 0.03 280);
 
-  /* Borders: Visible Gray (Crucial because bg is not white) */
-  --border: oklch(0.87 0 0);
-  --input: oklch(0.87 0 0);
-  --ring: oklch(0.1 0 0); /* Focus ring matches Primary */
+  /* Muted: PANTONE 15-0703 Ashes of Roses */
+  /* Dusty neutral for backgrounds of disabled items/tags. */
+  --muted: oklch(0.75 0.02 20);
+  --muted-foreground: oklch(0.45 0.02 20);
 
-  /* Charts & Destructive (kept standard) */
-  --destructive: oklch(0.577 0.245 27.325);
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
+  /* Accent: Softer Scarlet or Cosmic Sky blend for hovers */
+  --accent: oklch(0.92 0.02 85); /* Subtle hover based on bg */
+  --accent-foreground: oklch(0.28 0.02 85);
 
-  /* Sidebar variables */
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  /* Borders: Ashes of Roses derivative */
+  --border: oklch(0.82 0.02 20);
+  --input: oklch(0.82 0.02 20);
+
+  /* Ring: Scarlet Smile for focus states */
+  --ring: oklch(0.48 0.16 23);
+
+  /* Charts */
+  --chart-1: oklch(0.48 0.16 23); /* Scarlet Smile */
+  --chart-2: oklch(0.7 0.06 280); /* Cosmic Sky */
+  --chart-3: oklch(0.75 0.02 20); /* Ashes of Roses */
+  --chart-4: oklch(0.6 0.12 180); /* Complementary Teal */
+  --chart-5: oklch(0.85 0.1 85); /* Gold/Yellow accent */
+
+  /* Sidebar */
+  --sidebar: oklch(0.95 0.005 84.5); /* Close to Cloud Dancer */
+  --sidebar-foreground: oklch(0.28 0.02 85);
+  --sidebar-primary: oklch(0.48 0.16 23);
+  --sidebar-primary-foreground: oklch(0.98 0 0);
+  --sidebar-accent: oklch(0.92 0.02 85);
+  --sidebar-accent-foreground: oklch(0.28 0.02 85);
+  --sidebar-border: oklch(0.82 0.02 20);
+  --sidebar-ring: oklch(0.48 0.16 23);
 }
 
 .dark {
-  /* DARK MODE: Matte Charcoal */
-  /* Background: Deep Matte Gray (Not pure black) */
-  --background: oklch(0.12 0 0);
-  /* Text: Off-white for less eye strain */
-  --foreground: oklch(0.95 0 0);
+  /* --- DARK MODE: Deep Luxury --- */
 
-  /* Cards: Slightly lighter gray to elevate */
-  --card: oklch(0.15 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.15 0 0);
-  --popover-foreground: oklch(0.985 0 0);
+  /* Background: PANTONE 19-4005 Stretch Limo */
+  /* A deep, rich near-black. */
+  --background: oklch(0.22 0.01 260);
 
-  /* Primary: White for high contrast buttons */
-  --primary: oklch(0.95 0 0);
-  --primary-foreground: oklch(0.12 0 0);
+  /* Foreground: Cloud Dancer (Text becomes the light color) */
+  --foreground: oklch(0.942 0.005 84.5);
 
-  /* Secondary: Darker gray */
-  --secondary: oklch(0.2 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
+  /* Card: Slightly lighter than background */
+  --card: oklch(0.26 0.01 260);
+  --card-foreground: oklch(0.942 0.005 84.5);
+  --popover: oklch(0.26 0.01 260);
+  --popover-foreground: oklch(0.942 0.005 84.5);
 
-  /* Muted: Subtle background for secondary items */
-  --muted: oklch(0.274 0.006 286.033);
-  --muted-foreground: oklch(0.705 0.015 286.067);
+  /* Primary: Scarlet Smile (kept consistent, or lighten slightly for dark mode visibility) */
+  --primary: oklch(0.55 0.16 23);
+  --primary-foreground: oklch(0.98 0 0);
 
-  /* Accent: Lighter gray for hovers */
-  --accent: oklch(0.2 0 0);
-  --accent-foreground: oklch(0.985 0 0);
+  /* Secondary: Cosmic Sky (Darker muted blue) */
+  --secondary: oklch(0.35 0.06 280);
+  --secondary-foreground: oklch(0.942 0.005 84.5);
 
-  /* Destructive */
-  --destructive: oklch(0.704 0.191 22.216);
+  /* Muted */
+  --muted: oklch(0.3 0.02 260);
+  --muted-foreground: oklch(0.7 0.02 260);
 
-  /* Borders: Low contrast lines */
-  --border: oklch(0.22 0 0);
-  --input: oklch(0.22 0 0);
-  --ring: oklch(0.8 0 0);
+  /* Accent */
+  --accent: oklch(0.3 0.02 260);
+  --accent-foreground: oklch(0.942 0.005 84.5);
 
-  /* Charts & Sidebar */
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  /* Borders */
+  --border: oklch(0.32 0.01 260);
+  --input: oklch(0.32 0.01 260);
+  --ring: oklch(0.55 0.16 23);
+
+  /* Charts */
+  --chart-1: oklch(0.55 0.16 23);
+  --chart-2: oklch(0.7 0.06 280);
+  --chart-3: oklch(0.75 0.02 20);
+  --chart-4: oklch(0.6 0.12 180);
+  --chart-5: oklch(0.85 0.1 85);
+
+  /* Sidebar */
+  --sidebar: oklch(0.24 0.01 260);
+  --sidebar-foreground: oklch(0.942 0.005 84.5);
+  --sidebar-primary: oklch(0.55 0.16 23);
+  --sidebar-primary-foreground: oklch(0.98 0 0);
+  --sidebar-accent: oklch(0.3 0.02 260);
+  --sidebar-accent-foreground: oklch(0.942 0.005 84.5);
+  --sidebar-border: oklch(0.32 0.01 260);
+  --sidebar-ring: oklch(0.55 0.16 23);
 }
 
 @layer base {
@@ -171,6 +178,7 @@
   }
 }
 
+/* Syntax Highlighting overrides (Optional) */
 pre[data-theme*=" "],
 code[data-theme*=" "],
 code[data-theme*=" "] span {
@@ -178,7 +186,6 @@ code[data-theme*=" "] span {
   background-color: var(--shiki-light-bg);
 }
 
-/* 2. Dark Mode */
 .dark pre[data-theme*=" "],
 .dark code[data-theme*=" "],
 .dark code[data-theme*=" "] span {
