@@ -1,0 +1,417 @@
+---
+title: "Advent of Code Day 1"
+publishedAt: "2025-12-15"
+description: "Solving advent of code using typescript and rust"
+tags: ["adventofcode","typescript", "rust"]
+repositoryUrl: "https://github.com/miketeow/adventofcode/tree/main/2025/day01"
+techStack: ["TypeScript", "Rust"]
+---
+
+# Introduction
+
+Here is the question for Day 1 from [Advent of Code](https://adventofcode.com/2025/day/1).
+
+My first thought was that I would probably need to use an array and the modulus operator. The question mentions that the dial only moves between 0 and 99—this kind of wrapping behavior is usually achieved through modulus arithmetic.
+
+All AoC challenges need to read inputs, so I created an `index.ts`. It reads `input.txt` and parses it into an array so I can manipulate the data. I also structured my project by using `index.ts` as an entry file to test different code.
+
+## JavaScript
+
+### Part One
+
+At first, I thought about creating two arrays: one for the instructions (`"R5,L20,..."`) and another for the constant dial values from 1 to 99. I planned to manipulate the dial array based on the instructions. But I quickly scrapped this idea when I realized I only needed a single number variable to represent the dial position, which always starts at 50.
+
+I started by looping through the instruction array, using string slicing to separate the direction from the value.
+
+```js
+const solve = (rotations) => {
+  let dial = 50;
+  console.log("The dial starts by pointing at " + dial);
+
+for (let i = 0; i < rotations.length; i++) {
+  let step = parseInt(rotations[i].slice(1));
+  if (rotations[i][0] === "R") {
+    dial = (dial + step) % 100;
+  }
+}
+```
+A quick test made me realize that while adding positive values with the modulus operator is simple, negative values are a pain. In JavaScript, the % operator is actually a remainder operator, not a true mathematical modulus. Unlike the conventional modulus which only returns positive values, JavaScript's operator can return negative values (e.g., -5 % 100 is -5, not 95).
+
+To handle the "L" (Left) direction, I had to add an extra operation to force it back to positive:
+
+```js
+if (rotations[i][0] === "R") {
+  dial = (dial + step) % 100;
+} else {
+  dial = dial - (step % 100);
+  if (dial < 0) {
+    dial = 100 + dial;
+  }
+}
+```
+
+To get the answer (how many times the dial points at zero), I just used a counter to check the value of the dial at the end of every loop.
+
+### Part Two
+
+Part Two wants us to count the number of times the dial passed through the number 0 as well. Since we need the total of "pointing at 0" AND "passing through 0," I figured I didn't need to change the main structure. I simply needed a function to track the pass-bys.
+
+My first thought on what counts as a "pass-by": a full rotation. For every 100 steps, it definitely passes 0.
+
+```js
+// count pass by 0
+for (let k = dial + step; k > 100; k -= 100) {
+  passByPerRotation++;
+}
+
+// for "L" condition
+for (let j = dial - step; j < 0; j += 100) {
+  passByPerRotation++;
+}
+```
+At the end of the outer loop, I calculate the total count and reset the per-rotation counter.
+
+```js
+for (){
+  ...
+  if (dial == 0) {
+    pointAtZero++;
+  }
+  totalpassby += passByPerRotation;
+  passByPerRotation = 0;
+}
+return pointAtZero + totalpassby;
+```
+
+I ran the program using the sample input, but I got the wrong answer. Apparently, there are many edge cases to consider.
+
+The first issue was a false positive. In one iteration, the dial started at 0 and rotated left by 5 to position 95. This fulfilled the loop condition and increased the `passByPerRotation` counter incorrectly. To resolve this, I added a check: only if the dial is not starting at 0 should it count the pass-by.
+
+But this new condition broke another test case: when the dial starts at 0 and rotates left 500 steps. This should increase the counter by 5. I had to patch that up too:
+
+```js
+if (rotations[i][0] === "L") {
+  if ((dial == 0 && step > 100) || dial != 0) {
+    for (let j = dial - step; j < 0; j += 100) {
+      passByPerRotation++;
+    }
+  }
+  ...
+}
+```
+
+At this point, this messy code passed most test cases but still gave the wrong result on the actual `input.txt`.
+
+### Brute Force
+
+One way to figure out how far off I was: create a brute-force solution that is guaranteed to be correct. You can write this yourself or ask an LLM. It simply loops through and counts every single "click" of the dial.
+
+```js
+const solveBruteForce = (steps) => {
+  let anchor = 50;
+  let totalHits = 0;
+
+  for (const line of steps) {
+    const direction = line[0];
+    const amount = parseInt(line.slice(1));
+
+    // The "Dumb" Loop - Simulates every single click
+    for (let click = 0; click < amount; click++) {
+      if (direction === "R") {
+        anchor++;
+        if (anchor === 100) anchor = 0; // Wrap right
+      } else {
+        anchor--;
+        if (anchor === -1) anchor = 99; // Wrap left
+      }
+
+      // The Golden Check: Did this specific click land on 0?
+      if (anchor === 0) {
+        totalHits++;
+      }
+    }
+  }
+  return totalHits;
+};
+```
+
+Comparing the results, my logic was only off by around 100. After testing different cases, I found the culprit: Start at 0, Rotate Left 150.
+
+
+```js
+if (rotations[i][0] === "L") {
+  if ((dial == 0 && step > 100) || dial != 0) {
+    // let j = 0 - 150 = -150; -150 < 0
+    for (let j = dial - step; j < 0; j += 100) {
+      // Reach here in first iteration, it then increase by 100 because of j += 100, so -150 become -50
+      passByPerRotation++;
+    }
+  }
+  ...
+}
+```
+
+The problem is the loop logic. It runs the first iteration (correct), increases j to -50, and runs again because -50 is still less than 0. Mathematically correct for the loop condition, but wrong for the problem.
+
+A simple visualization: Dial starts at 0, rotates Left 150 steps. It passes 0 once (at the 100th step) and stops at 50. My code was counting it twice.
+
+I'm sure I could fix this with Math.abs, but the code was messy enough. I decided to start over and come up with a cleaner solution.
+
+> Initially, I did the first four days in JavaScript. But when trying to port them to TypeScript, I realized how much better TypeScript is—it forces me to write safer code. So, I decided to switch to TypeScript entirely.
+
+## TypeScript
+
+### Final Solution
+
+First, I created a proper Euclidean modulo function to return non-negative results, saving me from "if/else" hell.
+
+```ts
+const mod = (n: number, m: number) => {
+  return ((n % m) + m) % m;
+};
+
+dial = mod(dial + steps, 100);
+dial = mod(dial - steps, 100);
+```
+
+Second, calculating the pass-bys. I realized that technically, I don't care about the final position for the *count*. Modulus is useless here because R500 mod 100 returns 0, but that ignores the 5 rotations. I needed division: `500 / 100 = 5` rotations.
+
+For the remaining steps (e.g., R523), I use the remainder operator and check if the final position crosses the threshold.
+
+```ts
+const passBy = (right: boolean, current: number, steps: number) => {
+  let counter = 0;
+  let remainder = 0;
+  if (steps >= 100) {
+    counter = Math.floor(steps / 100);
+  }
+
+  remainder = steps % 100;
+
+  if (right) {
+    if (current + remainder > 99) {
+      counter++;
+    }
+  } else {
+    if (current - remainder <= 0 && current !== 0) {
+      counter++;
+    }
+  }
+  return counter;
+};
+```
+
+I used Math.floor to avoid floating-point numbers and added extra conditions for left rotations to handle edge cases:
+
+1. Start 20, Left 50: `20 - 50 (-30) <= 0` -> Count (passed 0).
+
+2. Start 20, Left 20: `20 - 20 (0) <= 0` -> Count (stopped at 0).
+
+3. Start 0, Left 5: `0 - 5 (-5) <= 0` -> No Count (started at 0).
+
+The full solution is:
+
+```ts
+const mod = (n: number, m: number) => {
+  return ((n % m) + m) % m;
+};
+
+const passBy = (right: boolean, current: number, steps: number) => {
+  let counter = 0;
+  let remainder = 0;
+  if (steps >= 100) {
+    counter = Math.floor(steps / 100);
+  }
+
+  remainder = steps % 100;
+
+  if (right) {
+    if (current + remainder > 99) {
+      counter++;
+    }
+  } else {
+    if (current - remainder <= 0 && current !== 0) {
+      counter++;
+    }
+  }
+  return counter;
+};
+
+export const solve = (rotations: string[]) => {
+  let dial = 50;
+  let totalPassby = 0;
+
+  for (const rotation of rotations) {
+    let passByZeroDial = 0;
+
+    //safety check
+    if (!rotation) continue;
+    const steps = parseInt(rotation.slice(1));
+
+    if (rotation[0] === "R") {
+      passByZeroDial = passBy(true, dial, steps);
+      dial = mod(dial + steps, 100);
+    } else {
+      passByZeroDial = passBy(false, dial, steps);
+      dial = mod(dial - steps, 100);
+    }
+
+    totalPassby += passByZeroDial;
+  }
+
+  console.log(`The result is: ${totalPassby}`);
+};
+
+```
+
+### Refactored Version
+
+Here is a refactored version I built with Gemini. It simplifies the logic by using a continuous coordinate system to calculate the absolute difference. It took some time to develop the intuition for this, but it's much cleaner.
+
+```tsx showLineNumbers {1,29,32}
+type Direction = "R" | "L";
+
+const mod = (n: number, m: number) => ((n % m) + m) % m;
+
+// Simplified Logic: Continuous Coordinate System
+// calculate the absolute change
+
+const countPasses = (
+  current: number,
+  steps: number,
+  direction: Direction
+): number => {
+  const delta = direction === "R" ? steps : -steps;
+  const target = current + delta;
+  // 50 will be 0, 150 will be 1
+  const currentBlock = Math.floor(current / 100);
+  const targetBlock = Math.floor(target / 100);
+
+  return Math.abs(targetBlock - currentBlock);
+};
+
+export const solveRefactor = (rotations: string[]) => {
+  let dial = 50;
+  let totalPassby = 0;
+
+  for (const rotation of rotations) {
+    if (!rotation) continue;
+
+    const direction = rotation[0] as Direction;
+    const steps = parseInt(rotation.slice(1));
+
+    totalPassby += countPasses(dial, steps, direction);
+
+    // update dial position
+    if (direction === "R") {
+      dial = mod(dial + steps, 100);
+    } else {
+      dial = mod(dial - steps, 100);
+    }
+  }
+
+  console.log(`The result is: ${totalPassby}`);
+};
+
+```
+## Rust
+
+### Part One
+Since I solved this in JS first, my main Rust function uses that same logic. However, I also wrote a `solve()` function which is refactored. It converts the input into a signed `move_amount` (positive for Right, negative for Left).
+
+Crucially, Rust has a built-in Euclidean remainder function: `rem_euclid`. This is basically the custom `mod` function I wrote in JS, but native. It makes the code very concise.
+
+```rust
+fn main() {
+  // let input = fs::read_to_string("../sampleinput.txt").expect("Error reading input.txt");
+  let input: &str = include_str!("../../input.txt");
+  let mut start: i32 = 50;
+  let mut result: i32 = 0;
+  for line in input.lines(){
+    // println!("Direction: {}, Number: {}", line.chars().next().unwrap(), &line[1..]);
+    if line.chars().next().unwrap() == 'R' {
+      start = (start + line[1..].parse::<i32>().unwrap()) % 100;
+    } else {
+      start = start - (line[1..].parse::<i32>().unwrap() % 100);
+      if start < 0{
+        start = 100 + start;
+      }
+    }
+    if start == 0 {
+      result += 1;
+    }
+  }
+
+  println!("The result is: {}", result);
+  println!("The result using the function is: {}", solve(input));
+}
+
+fn solve(input: &str) -> i32 {
+  let mut start: i32 = 50;
+  let mut result: i32 = 0;
+
+  for line in input.lines() {
+    let num = line[1..].parse::<i32>().unwrap();
+    let move_amount = if line.starts_with('R') {num} else {-num};
+    start = (start + move_amount).rem_euclid(100);
+    if start == 0 {
+      result += 1;
+    }
+  }
+  result
+}
+```
+
+### Part Two
+
+To solve Part Two, I ported the pass-by function. It uses the same logic as the TypeScript version, just with Rust syntax.
+
+```rust
+fn main() {
+  // let input = fs::read_to_string("../sampleinput.txt").expect("Error reading input.txt");
+  let input: &str = include_str!("../../input.txt");
+
+  println!("The result is: {}", result);
+  println!("The result using the function is: {}", solve(input));
+}
+
+fn solve(input: &str) -> i32 {
+  let mut current: i32 = 50;
+  let mut result: i32 = 0;
+
+  for line in input.lines() {
+    // 1. parse the number, always positive
+    let num = line[1..].parse::<i32>().unwrap();
+
+    // 2. determine the direction
+    let is_right = line.starts_with('R');
+
+    // 3. calculate pass_by using magnitude
+    let counter = pass_by(is_right,current, num);
+    // 4. update the counter
+    result += counter;
+
+    // 5. update the position
+    let move_amount = if is_right {num} else {-num};
+    current = (current + move_amount).rem_euclid(100);
+
+  }
+  result
+}
+
+fn pass_by(is_right: bool, current: i32, num: i32) -> i32{
+  let mut counter =  num / 100;
+  let remainder: i32 = num % 100;
+
+  if is_right{
+    if current + remainder > 99 {
+      counter += 1;
+    }
+  } else {
+    if current - remainder <= 0 && current != 0 {
+      counter += 1;
+    }
+  }
+  counter
+}
+```

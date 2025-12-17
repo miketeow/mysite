@@ -1,13 +1,13 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Geist_Mono, Space_Grotesk } from "next/font/google";
 
 import Header from "@/components/header";
 import { Providers } from "@/components/providers";
 
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const spaceGrotesk = Space_Grotesk({
+  variable: "--font-space-grotesk",
   subsets: ["latin"],
 });
 
@@ -33,7 +33,7 @@ export default function RootLayout({
       className="scroll-p-20 scroll-smooth"
     >
       <body
-        className={`${geistSans.className} ${geistMono.variable} antialiased`}
+        className={`${spaceGrotesk.className} ${geistMono.variable} ${spaceGrotesk.variable} antialiased`}
       >
         <Providers>
           <Header />

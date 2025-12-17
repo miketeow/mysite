@@ -124,5 +124,26 @@ export function useMDXComponents(): MDXComponents {
         </pre>
       );
     },
+
+    code: ({ children, className, ...props }: ComponentProps<"code">) => {
+      const isInline = !className;
+
+      if (isInline) {
+        return (
+          <code
+            className="rounded bg-red-100 px-[0.3rem] py-[0.1rem] font-mono text-sm font-medium text-red-900 dark:bg-red-900/30 dark:text-red-200"
+            {...props}
+          >
+            {children}
+          </code>
+        );
+      }
+
+      return (
+        <code className={className} {...props}>
+          {children}
+        </code>
+      );
+    },
   };
 }
