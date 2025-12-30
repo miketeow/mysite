@@ -8,9 +8,9 @@ import { badgeVariants } from "@/components/ui/badge";
 import { getBlogPosts, getProjects } from "@/lib/mdx";
 import { formatDate } from "@/lib/utils";
 
-export default function Home() {
-  const latestBlogPosts = getBlogPosts().slice(0, 4);
-  const featuredProjects = getProjects().slice(0, 2);
+export default async function Home() {
+  const latestBlogPosts = (await getBlogPosts()).slice(0, 4);
+  const featuredProjects = (await getProjects()).slice(0, 2);
   return (
     <div className="py-20">
       <div className="container max-w-6xl space-y-28">

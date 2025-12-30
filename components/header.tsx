@@ -7,10 +7,12 @@ import MobileNav from "./mobile-nav";
 import SiteSearch from "./site-search";
 import { ThemeToggle } from "./theme-toggle";
 
-export function Header() {
+export async function Header() {
   // fetch data
-  const blogPosts = getBlogPosts();
-  const projects = getProjects();
+  const [blogPosts, projects] = await Promise.all([
+    getBlogPosts(),
+    getProjects(),
+  ]);
 
   // transform data (lightweight payload for client)
   // don't pass the entire mdx content to search bar

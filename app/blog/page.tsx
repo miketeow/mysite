@@ -4,8 +4,8 @@ import { SectionTitle } from "@/components/section-title";
 import { getBlogPosts } from "@/lib/mdx";
 import { formatDate } from "@/lib/utils";
 
-export default function BlogListPage() {
-  const posts = getBlogPosts();
+export default async function BlogListPage() {
+  const posts = await getBlogPosts();
 
   return (
     <section className="container mx-auto max-w-3xl px-4 pt-32 pb-20">

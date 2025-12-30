@@ -1,3 +1,5 @@
+import { cache } from "react";
+
 import fs from "fs";
 import matter from "gray-matter";
 import path from "path";
@@ -25,12 +27,13 @@ function getMDXFiles(dir: string) {
   return fs.readdirSync(dir).filter((file) => path.extname(file) === ".mdx");
 }
 
-function readMDXFile(filePath: string) {
+// centralized file reader (internal only)
+const readMDXFile = cache((filePath: string) => {
   const rawContent = fs.readFileSync(filePath, "utf-8");
   return matter(rawContent);
-}
+});
 
-export function getBlogPosts() {
+export const getBlogPosts = cache(async () => {
   const blogDir = path.join(CONTENT_DIR, "blog");
 
   const files = getMDXFiles(blogDir);
@@ -38,10 +41,9 @@ export function getBlogPosts() {
   return files
     .map((file) => {
       const { data, content } = readMDXFile(path.join(blogDir, file));
-      const slug = path.basename(file, ".mdx");
 
       return {
-        slug,
+        slug: file.replace(/\.mdx$/, ""),
         metadata: data as BlogMetadata,
         content,
       };
@@ -52,19 +54,18 @@ export function getBlogPosts() {
         new Date(a.metadata.publishedAt).getTime()
       );
     });
-}
+});
 
-export function getProjects() {
+export const getProjects = cache(async () => {
   const projectDir = path.join(CONTENT_DIR, "projects");
   const files = getMDXFiles(projectDir);
 
   return files
     .map((file) => {
       const { data, content } = readMDXFile(path.join(projectDir, file));
-      const slug = path.basename(file, ".mdx");
 
       return {
-        slug,
+        slug: file.replace(/\.mdx$/, ""),
         metadata: data as ProjectMetadata,
         content,
       };
@@ -75,11 +76,14 @@ export function getProjects() {
         new Date(a.metadata.publishedAt).getTime()
       );
     });
-}
+});
 
-export function getAllTags() {
-  const blogPosts = getBlogPosts();
-  const projects = getProjects();
+export const getAllTags = cache(async () => {
+  const [blogPosts, projects] = await Promise.all([
+    getBlogPosts(),
+    getProjects(),
+  ]);
+
   const tags = new Set<string>();
 
   [...blogPosts, ...projects].forEach((post) => {
@@ -89,11 +93,13 @@ export function getAllTags() {
   });
 
   return Array.from(tags);
-}
+});
 
-export function getPostsByTag(tag: string) {
-  const blogPosts = getBlogPosts();
-  const projects = getProjects();
+export const getPostsByTag = cache(async (tag: string) => {
+  const [blogPosts, projects] = await Promise.all([
+    getBlogPosts(),
+    getProjects(),
+  ]);
 
   const filteredBlogPosts = blogPosts.filter((post) => {
     return post.metadata.tags.includes(tag);
@@ -107,4 +113,4 @@ export function getPostsByTag(tag: string) {
     blogs: filteredBlogPosts,
     projects: filteredProjects,
   };
-}
+});

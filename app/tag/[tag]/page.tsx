@@ -9,7 +9,7 @@ type Params = Promise<{ tag: string }>;
 
 // next js Static Site Generation
 export async function generateStaticParams() {
-  const tags = getAllTags();
+  const tags = await getAllTags();
   return tags.map((tag) => ({
     tag,
   }));
@@ -26,7 +26,7 @@ export async function generateMetadata({ params }: { params: Params }) {
 export default async function TagPage({ params }: { params: Params }) {
   const { tag } = await params;
   const decodedTag = decodeURIComponent(tag);
-  const { blogs, projects } = getPostsByTag(decodedTag);
+  const { blogs, projects } = await getPostsByTag(decodedTag);
 
   if (blogs.length === 0 && projects.length === 0) {
     return notFound();
