@@ -204,6 +204,7 @@ code[data-theme*=" "] > [data-line] > span {
 code[data-line-numbers] {
   counter-reset: line;
   display: grid; /* Ensures lines stack properly */
+  padding-left: 1.5rem;
 }
 
 /* 4. Line Number Styling */
@@ -234,6 +235,59 @@ code::after {
   content: none;
 }
 
+/* --- Diff Styling --- */
+
+/* SHARED: Base style for both Add and Remove markers */
+code .diff.remove::before,
+code .diff.add::before {
+  position: absolute; /* Default for No-Line-Numbers mode */
+  left: 0.5rem;
+  font-weight: bold;
+}
+
+/* 1. Removal styling (-) */
+code > .diff.remove {
+  background-color: rgba(244, 63, 94, 0.15);
+  position: relative; /* Needed for the absolute positioning context */
+}
+
+code > .diff.remove::before {
+  content: "-";
+  color: #f43f5e;
+}
+
+/* 2. Addition styling (+) */
+code > .diff.add {
+  background-color: rgba(20, 184, 166, 0.15);
+  position: relative;
+}
+
+code > .diff.add::before {
+  content: "+";
+  color: #14b8a6;
+}
+
+/* 3. CRITICAL FIX: When Line Numbers are ENABLED */
+/* We reset the markers to behave exactly like line numbers (in-flow) */
+code[data-line-numbers] > .diff.remove::before,
+code[data-line-numbers] > .diff.add::before {
+  position: static; /* Put it back in the flow! */
+
+  /* Match your "Line Number Styling" properties exactly: */
+  display: inline-block;
+  width: 1rem;
+  margin-right: 1.5rem;
+  text-align: right;
+
+  /* Reset left since we aren't absolute anymore */
+  left: auto;
+}
+
+/* Optional: Strikethrough */
+code > .diff.remove span {
+  text-decoration: line-through;
+  opacity: 0.6;
+}
 /* --- Dark Mode Overrides --- */
 
 .dark pre[data-theme*=" "],
@@ -252,4 +306,12 @@ code::after {
 
   /* Option 2: Or manually set a lighter gray value */
   background-color: oklch(0.4 0.02 260);
+}
+
+/* Connect the code block to the tab header */
+[role="tabpanel"] > div.group.border-border.relative.my-6 {
+  margin-top: 0 !important;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  border-top: none;
 }

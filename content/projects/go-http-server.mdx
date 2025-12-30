@@ -1,0 +1,267 @@
+---
+title: "Go HTTP Server"
+publishedAt: "2025-12-21"
+description: "Create a HTTP server in go"
+tags: ["Go","server"]
+repositoryUrl: "https://github.com/miketeow/adventofcode/tree/main/2025/day01"
+techStack: ["Go"]
+---
+# Introduction
+
+This post documents my learning process about building HTTP server in Go. Since I am still fairly new to Go, this post will contains not only concept about HTTP server, but also some Go coding style and practice that I discover and learned along the way.
+
+## Server
+
+The way to define a server is:
+
+```go
+package main
+import ("net/http")
+
+func main(){
+	server := &http.Server{
+		Addr: ":8080",
+	}
+
+	server.ListenAndServe()
+}
+```
+
+The code is simple enough, almost similar to how it is done in javascript with express.js to create server.
+
+Although this post should focus on HTTP server. I dive deep into each line of code and try to understand pointer in practical use cases.
+
+In the [official go documentation](https://pkg.go.dev/net/http#hdr-Servers) example, it also use the "&" symbol before "http.Server{}". But interestingly, if I remove the "&" ampersand and save the file, the go compiler won't show any error. This is because the compiler is smart enough to see that in the next line there is a `serve.ListenAndServe()` function, and if you hover over this function, the documentation stated that the function signature is expecting a `(s *http.Server)`, a pointer receiver, it is used to modify the original value of the server. The counter example would be `(s httpServer)`, without the dereference "*" symbol, it is a value receiver, which doesn't make sense in the case of server for two reasons:
+- server itself is huge, you typically only need one, and you don't want multiple copy of it throughout your program.
+- within the server struct there are atomic fields which doesn't allow to be copy, because it prevent race condition between two copies. If you hover over the "http.Server", you can see its documentation.
+
+```go
+type Server struct {
+  Addr string
+  ... // lots of other fields
+  inShutdown atomic.Bool // true when server is in shutdown
+  disableKeepAlives atomic.Bool
+}
+```
+But to start from first principles, it depends on how the user is expected to use this struct.
+
+For example, in a simple program that have a point struct. It depends on what you want to do with it. If your program is going to be a single procedure top to bottom procedure program. Even with some for loop inside and multiple function modifying the state inside the Point struct, as long as every function happen in sequence, it is fine. But if there is going to be some goroutine in the program modifying the Point state concurrently, then we need to change the int type inside into atomic int to prevent race condition. The examples here is showing a single goroutine within the for loop to increment the point state, it might seems like there is only one goroutine, but the for loop is actually spinning up a new goroutine for every iterations, so all these goroutines are trying to increment the state at the same time, casuing race condition.
+
+```go
+type Point struct {
+	x int
+}
+
+func main() {
+	p := Point{}
+	var wg sync.WaitGroup
+
+	for i := 0; i < 1000; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			p.x++ // <--- This is the Race Condition!
+		}()
+	}
+
+	wg.Wait()
+	// Result: Likely less than 1000 (e.g., 942, 980)
+	fmt.Printf("Standard int result: %d\n", p.x)
+}
+```
+
+To prevent the race condition, we need to change the point fields type to atomic, which prevent concurrent update.
+
+```go
+import ("sync/atomic")
+
+type AtomicPoint struct {
+	x atomic.Int32
+}
+
+func main() {
+	p := AtomicPoint{}
+	var wg sync.WaitGroup
+
+	for i := 0; i < 1000; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			p.x.Add(1) // <--- This is an Atomic Transaction
+		}()
+	}
+
+	wg.Wait()
+	// Result: Guaranteed to be 1000
+	fmt.Printf("Atomic int result: %d\n", p.x.Load())
+}
+```
+
+So we have establish that the decision to use atomic type fields depends on the purpose of the program. A HTTP server must be able to handle multiple requests concurrently, or else it might be busy processing the first request and drop or ignore the second and third request.
+
+Another way of seeing this, which might be easier since it is more idiomatic or easier for someone coming from a Java background is that both these lines are doing the same thing, initializing the server, but with the "new" keyword, user will have to set the field one by one separately:
+
+```go
+server1 := new(http.Server)
+server1.Addr = ":8081"
+server2 := &http.Server{
+  Addr: ":8080"
+}
+```
+
+## Serve Mux
+
+ServeMux is a HTTP request multiplexer, details description can be found on the [documentation](https://pkg.go.dev/net/http#ServeMux). But the main function is to match the URL of incoming request against patterns and calls different handler. It also handles precedence and sanitise request.
+
+There is a default serve mux within the http.Server, but **you should not use it**
+
+This default serve mux is a global instance coming from the net/http package.
+
+```go
+func main(){
+	server := &http.Server{
+		Addr: ":8080",
+	}
+		http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "Hello from the DEFAULT mux!")
+	})
+
+	fmt.Println("Server starting on :8080 using DefaultServeMux...")
+	server.ListenAndServe()
+}
+```
+
+With this code, you can go to the "localhost:8080" in the browser and see the result. It works but it is unsafe. If you use this default serve mux, a malicious library author can access the global http function and do all kind of stuff such as adding a route. For example this malicious library using the global http function to add a route.
+
+```go
+package analytics
+
+import (
+	"fmt"
+	"net/http"
+)
+
+func init() {
+	// This registers to the GLOBAL mux automatically on import
+	http.HandleFunc("/malicious", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTeapot)
+		fmt.Fprint(w, "I have poisoned the global DefaultServeMux!")
+	})
+}
+```
+
+```go
+package main
+
+import (
+	"fmt"
+	"net/http"
+	_ "testproject/analytics"
+  // import the package, but not using any function from it, just want the init() to run
+)
+
+func main(){
+	server := &http.Server{
+		Addr: ":8080",
+	}
+		http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "Hello from the DEFAULT mux!")
+	})
+
+	fmt.Println("Server starting on :8080 using DefaultServeMux...")
+	server.ListenAndServe()
+}
+```
+You can go to the browser to access your homepage "localhost:8080" and also "localhost:8080/malicious" which is coming from the packages. To avoid this, always create your own ServerMux. After adding your own ServerMux, you can no longer access the "/malicious" path even though you imported the malicious packages
+
+```go
+func main(){
+	mux := http.NewServeMux()
+	server := &http.Server{
+		Addr: ":8080",
+		Handler: mux,
+	}
+}
+```
+## File Server
+
+Depending on the purpose of the project, if it is a web server, Go has built-in "http.FileServer" to HTTP request with the contents of the file system at root. During development, user can simply use "http.FileServer(http.Dir("."))"" to access the index.html that is in the same level as the "main.go" file in the project :
+
+```go
+func main(){
+	mux := http.NewServeMux()
+	server := &http.Server{
+		Addr: ":8081",
+		Handler: mux,
+	}
+
+	mux.Handle("/",http.FileServer(http.Dir(".")))
+
+	fmt.Println("Server starting on :8081")
+	server.ListenAndServe()
+}
+```
+But there is a flaw in directly using "http.Dir(".")", because malicious user can potentially access your entire source code by going to localhost:8081/main.go - yes it is accessible this way if you use "http.Dir(".")". So to be safe, we need to create another "public" folder in the project and set the file server path to the public folder, making sure the backend source code is separate from the html code. Because visitor cannot go "up" into private files.
+
+The safe way:
+
+```go
+func main(){
+	mux := http.NewServeMux()
+	server := &http.Server{
+		Addr: ":8081",
+		Handler: mux,
+	}
+
+	fsHandler := http.FileServer(http.Dir("./public"))
+
+	mux.Handle("/app/",http.StripPrefix("/app/",fsHandler))
+
+	fmt.Println("Server starting on :8081")
+	server.ListenAndServe()
+}
+```
+
+With this setup, a visitor can only visit the url - "yoursite.com/app" which can only access the public folder within your project. The visitor can never visit anything outside of the public folder.
+
+## Stateful Handler
+
+A classic way of learning any new language or project is printing hello world and increasing a counter. Let's start with the simple endpoint which return hello world.
+
+```go
+	mux.HandleFunc("/app/hello",func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Add("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(200)
+		data := []byte("Hello World")
+		w.Write(data)
+	})
+```
+In this example, we use "HandleFunc()" instead of "Handle()" because "HandleFunc()" can accepts simple function as the second parameter, as long as it has the correct function signature.
+
+To increase counter by 1, you can use similar function, but we can only print the number to console instead of writing it as data on the page. Because converting type int32 into []byte require some extra function, but we won't be doing it because this code is just to show it is technically possible to use a global variable to increment counter, but eventually it would cause maintanence nightmare. And the best practice here is to use define a struct :
+
+```go
+  var globalHits atomic.Int32
+	mux.HandleFunc("/app/hello",func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Add("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(200)
+		globalHits.Add(1)
+		fmt.Println(globalHits.Load())
+	})
+```
+In the browser, go to the path localhost:8081/app/hello, the page will be blank. Keep refreshing the page, and you can see the terminal in editor where the server is running show the number value 1, 2, 3 ... incrementing everytime you refresh the page.
+
+This does not work well because it doesn't scale. Since we are developing a server, later on there will be lots of different state that is relevant to the server, it would be a better practice to simply define them within a struct, instead of multiple different variables. If everything relevant is define within the struct, we can then look at the function signature and immediately understand that this method is used on this particular struct, instead of reading every lines of code in the function, and trying to figure out what it is used for.
+
+```go
+var globalHits atomic.Int32
+var dbUrl string
+var startTime time.Time
+
+// it is better to define everything in struct instead of defining all separately
+type apiConfig struct {
+  fileserverHits atomic.Int32
+	query          *database.Queries
+	Platform       string
+}
+```

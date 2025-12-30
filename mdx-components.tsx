@@ -4,10 +4,14 @@ import { ComponentProps } from "react";
 import { ArrowUpRight } from "lucide-react";
 import type { MDXComponents } from "mdx/types";
 
+import CodeGroup from "@/components/code-group";
+import { cn } from "@/lib/utils";
+
 import { CopyButton } from "./components/copy-button";
 
 export function useMDXComponents(): MDXComponents {
   return {
+    CodeGroup,
     h1: ({ children, ...props }: ComponentProps<"h1">) => {
       return (
         <h1
@@ -114,10 +118,13 @@ export function useMDXComponents(): MDXComponents {
       // Default behavior for other figures (images etc)
       return <figure {...props}>{children}</figure>;
     },
-    pre: ({ children, ...props }: ComponentProps<"pre">) => {
+    pre: ({ children, className, ...props }: ComponentProps<"pre">) => {
       return (
         <pre
-          className="m-0! w-full overflow-x-auto p-4 text-sm leading-6"
+          className={cn(
+            "m-0! w-full overflow-x-auto p-4 text-sm leading-6",
+            className
+          )}
           {...props}
         >
           {children}

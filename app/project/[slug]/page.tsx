@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
+import { transformerNotationDiff } from "@shikijs/transformers";
 import fs from "fs";
 import matter from "gray-matter";
 import { Calendar, Globe, Hash, Layers } from "lucide-react";
@@ -26,6 +27,7 @@ const options = {
     light: "github-light",
   },
   keepBackground: true,
+  transformers: [transformerNotationDiff()],
 };
 
 // next js Static Site Generation

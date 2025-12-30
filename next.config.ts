@@ -2,8 +2,6 @@ import type { NextConfig } from "next";
 
 import createMDX from "@next/mdx";
 
-import { rehypeCopyLinked } from "./lib/rehype-copy-plugin";
-
 const nextConfig: NextConfig = {
   /* config options here */
 
