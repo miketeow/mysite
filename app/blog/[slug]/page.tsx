@@ -1,20 +1,16 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
-import fs from "fs";
-import matter from "gray-matter";
 import { Calendar, Hash, User } from "lucide-react";
 import { MDXRemote } from "next-mdx-remote/rsc";
-import path from "path";
 import rehypePrettyCode from "rehype-pretty-code";
 
 import { SectionTitle } from "@/components/section-title";
 import { badgeVariants } from "@/components/ui/badge";
+import { getBlogPostBySlug, getBlogPosts } from "@/lib/mdx";
 import { rehypeCopyLinked } from "@/lib/rehype-copy-plugin";
 import { formatDate } from "@/lib/utils";
 import { useMDXComponents } from "@/mdx-components";
-
-const BLOG_DIR = path.join(process.cwd(), "content/blog");
 
 type Params = Promise<{ slug: string }>;
 
@@ -28,45 +24,39 @@ const options = {
 
 // next js Static Site Generation
 export async function generateStaticParams() {
-  const files = fs.readdirSync(BLOG_DIR);
-  return files.map((file) => ({
-    slug: file.replace(".mdx", ""),
+  const posts = await getBlogPosts();
+  return posts.map((post) => ({
+    slug: post.slug,
   }));
 }
 
 export async function generateMetadata({ params }: { params: Params }) {
   const { slug } = await params;
-  const filePath = path.join(BLOG_DIR, `${slug}.mdx`);
+  const post = await getBlogPostBySlug(slug);
 
-  if (!fs.existsSync(filePath)) {
-    return { title: "Post Not Found" };
+  if (!post) {
+    return { title: "Not Found" };
   }
 
-  const fileContent = fs.readFileSync(filePath, "utf-8");
-  const { data } = matter(fileContent);
-
   return {
-    title: data.title,
-    description: data.description,
+    title: post.metadata.title,
+    description: post.metadata.description,
   };
 }
 
 export default async function BlogPostPage({ params }: { params: Params }) {
   const { slug } = await params;
-  const filePath = path.join(BLOG_DIR, `${slug}.mdx`);
+  const post = await getBlogPostBySlug(slug); // Reuses the cache from generateMetadata
 
-  if (!fs.existsSync(filePath)) {
-    notFound();
-  }
+  if (!post) notFound();
 
-  const fileContent = fs.readFileSync(filePath, "utf-8");
-  const { content, data } = matter(fileContent);
+  const { content, metadata } = post;
 
   return (
     <article>
       <div className="border-border mb-10 border-b pb-10">
         <SectionTitle as="h1" className="mb-6 text-2xl wrap-break-word">
-          {data.title}
+          {metadata.title}
         </SectionTitle>
 
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -75,7 +65,9 @@ export default async function BlogPostPage({ params }: { params: Params }) {
             {/* author */}
             <div className="flex items-center gap-2">
               <User className="size-4" />
-              <span className="text-foreground font-medium">{data.author}</span>
+              <span className="text-foreground font-medium">
+                {metadata.author}
+              </span>
             </div>
 
             <span className="text-muted-foreground/30 hidden sm:inline-block">
@@ -85,14 +77,14 @@ export default async function BlogPostPage({ params }: { params: Params }) {
             {/* date */}
             <div className="flex items-center gap-2">
               <Calendar className="size-4" />
-              <time dateTime={data.publishedAt}>
-                {formatDate(data.publishedAt)}
+              <time dateTime={metadata.publishedAt}>
+                {formatDate(metadata.publishedAt)}
               </time>
 
               {/* conditional update date */}
-              {data.updatedAt && (
+              {metadata.updatedAt && (
                 <div className="bg-muted flex items-center gap-1 rounded-full px-2 py-0.5 text-xs">
-                  <span>Last Updated: {formatDate(data.updatedAt)}</span>
+                  <span>Last Updated: {formatDate(metadata.updatedAt)}</span>
                 </div>
               )}
             </div>
@@ -100,8 +92,8 @@ export default async function BlogPostPage({ params }: { params: Params }) {
           {/* tags */}
 
           <div className="flex flex-wrap gap-2">
-            {data.tags &&
-              data.tags.map((tag: string) => (
+            {metadata.tags &&
+              metadata.tags.map((tag: string) => (
                 <Link
                   href={`/tag/${tag}`}
                   key={tag}

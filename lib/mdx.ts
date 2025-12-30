@@ -3,23 +3,33 @@ import { cache } from "react";
 import fs from "fs";
 import matter from "gray-matter";
 import path from "path";
+import { z } from "zod";
 
-export interface BaseMetadata {
-  title: string;
-  publishedAt: string;
-  updatedAt?: string;
-  description: string;
-  tags: string[];
-}
+// 1. Define a Base Schema for shared fields
+const BaseMetadataSchema = z.object({
+  title: z.string(),
+  publishedAt: z.string(),
+  updatedAt: z.string().optional(),
+  description: z.string(),
+  tags: z.array(z.string()).default([]),
+});
 
-export interface BlogMetadata extends BaseMetadata {
-  author: string;
-}
+// 2. Use .extend() to compose specialized schemas
+const BlogMetadataSchema = BaseMetadataSchema.extend({
+  author: z.string(),
+});
 
-export interface ProjectMetadata extends BaseMetadata {
-  repositoryUrl: string;
-  techStack: string[];
-}
+const ProjectMetadataSchema = BaseMetadataSchema.extend({
+  repositoryUrl: z.url(),
+  techStack: z.array(z.string()).default([]),
+});
+
+// 3. Export types inferred directly from the schemas
+export type BlogMetadata = z.infer<typeof BlogMetadataSchema>;
+export type ProjectMetadata = z.infer<typeof ProjectMetadataSchema>;
+
+// Optional: If you still need a generic base type for shared logic
+export type BaseMetadata = z.infer<typeof BaseMetadataSchema>;
 
 const CONTENT_DIR = path.join(process.cwd(), "content");
 
@@ -44,7 +54,7 @@ export const getBlogPosts = cache(async () => {
 
       return {
         slug: file.replace(/\.mdx$/, ""),
-        metadata: data as BlogMetadata,
+        metadata: BlogMetadataSchema.parse(data),
         content,
       };
     })
@@ -66,7 +76,7 @@ export const getProjects = cache(async () => {
 
       return {
         slug: file.replace(/\.mdx$/, ""),
-        metadata: data as ProjectMetadata,
+        metadata: ProjectMetadataSchema.parse(data),
         content,
       };
     })
@@ -112,5 +122,27 @@ export const getPostsByTag = cache(async (tag: string) => {
   return {
     blogs: filteredBlogPosts,
     projects: filteredProjects,
+  };
+});
+
+export const getBlogPostBySlug = cache(async (slug: string) => {
+  const filePath = path.join(CONTENT_DIR, "blog", `${slug}.mdx`);
+  if (!fs.existsSync(filePath)) return null;
+
+  const { data, content } = readMDXFile(filePath);
+  return {
+    metadata: BlogMetadataSchema.parse(data), // Runtime validation
+    content,
+  };
+});
+
+export const getProjectBySlug = cache(async (slug: string) => {
+  const filePath = path.join(CONTENT_DIR, "projects", `${slug}.mdx`);
+  if (!fs.existsSync(filePath)) return null;
+
+  const { data, content } = readMDXFile(filePath);
+  return {
+    metadata: ProjectMetadataSchema.parse(data),
+    content,
   };
 });

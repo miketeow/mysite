@@ -2,8 +2,6 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { transformerNotationDiff } from "@shikijs/transformers";
-import fs from "fs";
-import matter from "gray-matter";
 import { Calendar, Globe, Hash, Layers } from "lucide-react";
 import { MDXRemote } from "next-mdx-remote/rsc";
 import path from "path";
@@ -12,12 +10,11 @@ import rehypePrettyCode from "rehype-pretty-code";
 import OnThisPage from "@/components/on-this-page";
 import { SectionTitle } from "@/components/section-title";
 import { badgeVariants } from "@/components/ui/badge";
+import { getProjectBySlug, getProjects } from "@/lib/mdx";
 import { rehypeCopyLinked } from "@/lib/rehype-copy-plugin";
 import { formatDate } from "@/lib/utils";
 import { useMDXComponents } from "@/mdx-components";
 import GithubIcon from "@/public/github.svg";
-
-const PROJECT_DIR = path.join(process.cwd(), "content/projects");
 
 type Params = Promise<{ slug: string }>;
 
@@ -32,39 +29,33 @@ const options = {
 
 // next js Static Site Generation
 export async function generateStaticParams() {
-  const files = fs.readdirSync(PROJECT_DIR);
-  return files.map((file) => ({
-    slug: file.replace(".mdx", ""),
+  const posts = await getProjects();
+  return posts.map((post) => ({
+    slug: post.slug,
   }));
 }
 
 export async function generateMetadata({ params }: { params: Params }) {
   const { slug } = await params;
-  const filePath = path.join(PROJECT_DIR, `${slug}.mdx`);
+  const post = await getProjectBySlug(slug);
 
-  if (!fs.existsSync(filePath)) {
-    return { title: "Post Not Found" };
+  if (!post) {
+    return { title: "Not Found" };
   }
 
-  const fileContent = fs.readFileSync(filePath, "utf-8");
-  const { data } = matter(fileContent);
-
   return {
-    title: data.title,
-    description: data.description,
+    title: post.metadata.title,
+    description: post.metadata.description,
   };
 }
 
 export default async function ProjectPostPage({ params }: { params: Params }) {
   const { slug } = await params;
-  const filePath = path.join(PROJECT_DIR, `${slug}.mdx`);
+  const post = await getProjectBySlug(slug); // Reuses the cache from generateMetadata
 
-  if (!fs.existsSync(filePath)) {
-    notFound();
-  }
+  if (!post) notFound();
 
-  const fileContent = fs.readFileSync(filePath, "utf-8");
-  const { content, data } = matter(fileContent);
+  const { content, metadata } = post;
 
   return (
     <div className="container mx-auto max-w-6xl px-4">
@@ -73,14 +64,14 @@ export default async function ProjectPostPage({ params }: { params: Params }) {
         {/* top row */}
         <div className="mb-12 flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
           <SectionTitle as="h1" className="text-2xl wrap-break-word">
-            {data.title}
+            {metadata.title}
           </SectionTitle>
 
           {/* live url or source code */}
           <div className="flex shrink-0 gap-3">
-            {data.liveUrl && (
+            {metadata.repositoryUrl && (
               <Link
-                href={data.liveUrl}
+                href={metadata.repositoryUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="bg-foreground text-background hover:bg-foreground/90 inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold shadow-sm transition-colors"
@@ -89,9 +80,9 @@ export default async function ProjectPostPage({ params }: { params: Params }) {
                 Visit Site
               </Link>
             )}
-            {data.repositoryUrl && (
+            {metadata.repositoryUrl && (
               <Link
-                href={data.repositoryUrl}
+                href={metadata.repositoryUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="bg-muted hover:bg-accent inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium transition-colors"
@@ -111,28 +102,28 @@ export default async function ProjectPostPage({ params }: { params: Params }) {
               <Calendar className="size-3" /> Timeline
             </h3>
             <div className="text-sm font-medium">
-              <time dateTime={data.publishedAt}>
-                {formatDate(data.publishedAt)}
+              <time dateTime={metadata.publishedAt}>
+                {formatDate(metadata.publishedAt)}
               </time>
-              {data.updatedAt && (
+              {metadata.updatedAt && (
                 <div className="text-muted-foreground mt-1 text-xs">
-                  Updated: {formatDate(data.updatedAt)}
+                  Updated: {formatDate(metadata.updatedAt)}
                 </div>
               )}
             </div>
           </div>
 
           {/* column b: tech stack */}
-          {data.techStack && data.techStack.length > 0 && (
+          {metadata.techStack && metadata.techStack.length > 0 && (
             <div className="space-y-2">
               <h3 className="text-muted-foreground flex items-center gap-2 text-xs font-semibold tracking-wider uppercase">
                 <Layers className="size-3" /> Built With
               </h3>
               <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs font-medium">
-                {data.techStack.map((tech: string, index: number) => (
+                {metadata.techStack.map((tech: string, index: number) => (
                   <span key={tech} className="text-foreground">
                     {tech}
-                    {index < data.techStack.length - 1 && (
+                    {index < metadata.techStack.length - 1 && (
                       <span className="text-muted-foreground/40 ml-2">/</span>
                     )}
                   </span>
@@ -142,13 +133,13 @@ export default async function ProjectPostPage({ params }: { params: Params }) {
           )}
 
           {/* column c: clickable tags */}
-          {data.tags && data.tags.length > 0 && (
+          {metadata.tags && metadata.tags.length > 0 && (
             <div className="space-y-2">
               <h3 className="text-muted-foreground flex items-center gap-2 text-xs font-semibold tracking-wider uppercase">
                 <Hash className="size-3" /> Topics
               </h3>
               <div className="flex flex-wrap gap-2">
-                {data.tags.map((tag: string) => (
+                {metadata.tags.map((tag: string) => (
                   <Link
                     href={`/tag/${tag}`}
                     key={tag}
