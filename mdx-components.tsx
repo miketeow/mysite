@@ -12,10 +12,13 @@ import { CopyButton } from "./components/copy-button";
 export function useMDXComponents(): MDXComponents {
   return {
     CodeGroup,
-    h1: ({ children, ...props }: ComponentProps<"h1">) => {
+    h1: ({ className, children, ...props }: ComponentProps<"h1">) => {
       return (
         <h1
-          className="text-foreground mb-6 text-2xl font-bold tracking-tight"
+          className={cn(
+            "text-foreground mt-12 mb-6 text-3xl font-bold tracking-tight",
+            className
+          )}
           {...props}
         >
           {children}
@@ -23,33 +26,48 @@ export function useMDXComponents(): MDXComponents {
       );
     },
 
-    h2: ({ children, ...props }: ComponentProps<"h2">) => {
+    h2: ({ className, children, ...props }: ComponentProps<"h2">) => {
       return (
         <h2
-          className="text-foreground mb-6 text-xl font-bold tracking-tight"
+          className={cn(
+            "text-foreground mt-10 mb-4 text-2xl font-bold tracking-tight",
+            className
+          )}
           {...props}
         >
           {children}
         </h2>
       );
     },
-    h3: ({ children, ...props }: ComponentProps<"h3">) => {
+    h3: ({ className, children, ...props }: ComponentProps<"h3">) => {
       return (
         <h3
-          className="text-foreground mb-6 text-lg font-bold tracking-tight"
+          className={cn(
+            "text-foreground mt-8 mb-4 text-xl font-bold tracking-tight",
+            className
+          )}
           {...props}
         >
           {children}
         </h3>
       );
     },
+
     a: ({ href, children, ...props }: ComponentProps<"a">) => {
+      if (!href) {
+        return <span {...props}>{children}</span>;
+      }
+      const isInternal = href.startsWith("/");
+      const isAnchor = href.startsWith("#");
+
+      const baseStyles =
+        "font-medium underline underline-offset-4 decoration-primary/30 hover:decoration-primary transition-colors text-primary";
       // internal link
-      if (href?.startsWith("/")) {
+      if (isInternal) {
         return (
           <Link
             href={href}
-            className="text-primary decoration-primary/30 hover:decoration-primary font-medium underline underline-offset-4 transition-colors"
+            className={cn(baseStyles, props.className)}
             {...props}
           >
             {children}
@@ -58,11 +76,15 @@ export function useMDXComponents(): MDXComponents {
       }
 
       // anchor link
-      if (href?.startsWith("#")) {
+      if (isAnchor) {
         return (
           <a
             href={href}
-            className="text-muted-foreground/80 decoration-muted-foreground/30 hover:text-foreground hover:decoration-foreground font-medium underline decoration-dashed underline-offset-4 transition-all"
+            className={cn(
+              "text-muted-foreground/80 hover:text-foreground decoration-dashed transition-all",
+              baseStyles,
+              props.className
+            )}
             {...props}
           >
             {children}
@@ -76,11 +98,16 @@ export function useMDXComponents(): MDXComponents {
           href={href}
           target="_blank"
           rel="noopener noreferrer"
-          className="text-primary decoration-primary/30 hover:decoration-primary inline-flex items-center gap-0.5 font-medium underline underline-offset-4 transition-all"
+          className={cn(
+            "inline-flex items-center gap-0.5",
+            baseStyles,
+            props.className
+          )}
           {...props}
         >
           {children}
           <ArrowUpRight className="size-4 opacity-50" />
+          <span className="sr-only">(opens in a new tab)</span>
         </a>
       );
     },
@@ -131,14 +158,14 @@ export function useMDXComponents(): MDXComponents {
         </pre>
       );
     },
-
+    // neutral inline code
     code: ({ children, className, ...props }: ComponentProps<"code">) => {
       const isInline = !className;
 
       if (isInline) {
         return (
           <code
-            className="rounded bg-red-100 px-[0.3rem] py-[0.1rem] font-mono text-sm font-medium text-red-900 dark:bg-red-900/30 dark:text-red-200"
+            className="bg-muted text-foreground relative rounded px-[0.3rem] py-[0.1rem] font-mono text-sm font-medium"
             {...props}
           >
             {children}

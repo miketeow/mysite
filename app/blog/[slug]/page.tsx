@@ -55,7 +55,7 @@ export default async function BlogPostPage({ params }: { params: Params }) {
   return (
     <article>
       <div className="border-border mb-10 border-b pb-10">
-        <SectionTitle as="h1" className="mb-6 text-2xl wrap-break-word">
+        <SectionTitle as="h1" className="mb-6 text-3xl wrap-break-word">
           {metadata.title}
         </SectionTitle>
 

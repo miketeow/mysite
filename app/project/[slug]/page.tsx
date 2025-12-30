@@ -4,7 +4,6 @@ import { notFound } from "next/navigation";
 import { transformerNotationDiff } from "@shikijs/transformers";
 import { Calendar, Globe, Hash, Layers } from "lucide-react";
 import { MDXRemote } from "next-mdx-remote/rsc";
-import path from "path";
 import rehypePrettyCode from "rehype-pretty-code";
 
 import OnThisPage from "@/components/on-this-page";
@@ -63,7 +62,7 @@ export default async function ProjectPostPage({ params }: { params: Params }) {
       <header className="border-border mb-16 border-b pb-10">
         {/* top row */}
         <div className="mb-12 flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
-          <SectionTitle as="h1" className="text-2xl wrap-break-word">
+          <SectionTitle as="h1" className="text-3xl wrap-break-word">
             {metadata.title}
           </SectionTitle>
 
