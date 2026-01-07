@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { ComponentProps } from "react";
 
-import { ArrowUpRight } from "lucide-react";
+import { ArrowUpRight, FileCode, Folder } from "lucide-react";
 import type { MDXComponents } from "mdx/types";
 
 import CodeGroup from "@/components/code-group";
@@ -12,6 +12,48 @@ import { CopyButton } from "./components/copy-button";
 export function useMDXComponents(): MDXComponents {
   return {
     CodeGroup,
+    // 1. File Component (The "Soft Indigo Chip")
+    File: ({
+      children,
+      className,
+    }: {
+      children: React.ReactNode;
+      className?: string;
+    }) => (
+      <span
+        className={cn(
+          "rounded-md px-1.5 py-0.5 font-mono text-[0.9em] font-medium transition-colors",
+          // Light: Indigo text with very subtle background
+          "bg-indigo-50 text-indigo-700",
+          // Dark: Bright Indigo text with transparent background
+          "dark:bg-indigo-500/10 dark:text-indigo-300",
+          className
+        )}
+      >
+        {children}
+      </span>
+    ),
+    // 2. Url Component (The "Soft Emerald Chip")
+    Url: ({
+      children,
+      className,
+    }: {
+      children: React.ReactNode;
+      className?: string;
+    }) => (
+      <span
+        className={cn(
+          "rounded-md px-1.5 py-0.5 font-mono text-[0.9em] font-medium transition-colors",
+          // Light: Emerald text with very subtle background
+          "bg-emerald-50 text-emerald-700",
+          // Dark: Bright Emerald text with transparent background
+          "dark:bg-emerald-500/10 dark:text-emerald-300",
+          className
+        )}
+      >
+        {children}
+      </span>
+    ),
     h1: ({ className, children, ...props }: ComponentProps<"h1">) => {
       return (
         <h1
@@ -123,6 +165,34 @@ export function useMDXComponents(): MDXComponents {
       );
     },
 
+    // NEW: Handle the Code Block Title
+    figcaption: ({ children, ...props }: ComponentProps<"figcaption">) => {
+      // Guard: Only apply this style to rehype-pretty-code titles
+      if ("data-rehype-pretty-code-title" in props) {
+        return (
+          <figcaption
+            className={cn(
+              // Layout
+              "w-full border-b px-4 py-2.5",
+              // Typography
+              "mt-0!",
+              "text-muted-foreground font-mono text-xs font-medium",
+              // Colors (Subtle distinction from the code block background)
+              "border-border bg-zinc-50 dark:bg-zinc-900/50",
+              props.className
+            )}
+            {...props}
+          >
+            {/* We can add a File Icon here if we want to enforce it for all titles */}
+            {children}
+          </figcaption>
+        );
+      }
+
+      // Fallback for standard image captions
+      return <figcaption {...props}>{children}</figcaption>;
+    },
+
     figure: ({
       children,
       ...props
@@ -160,12 +230,19 @@ export function useMDXComponents(): MDXComponents {
     },
     // neutral inline code
     code: ({ children, className, ...props }: ComponentProps<"code">) => {
-      const isInline = !className;
+      const isBlock = "data-theme" in props || "data-language" in props;
 
-      if (isInline) {
+      if (!isBlock) {
         return (
           <code
-            className="bg-muted text-foreground relative rounded px-[0.3rem] py-[0.1rem] font-mono text-sm font-medium"
+            className={cn(
+              "font-mono text-[0.9em] font-semibold",
+              // Light: Vivid Rose/Pink (classic string/variable color)
+              "text-rose-600",
+              // Dark: Soft Rose
+              "dark:text-rose-400",
+              className
+            )}
             {...props}
           >
             {children}

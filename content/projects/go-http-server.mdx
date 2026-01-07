@@ -3,7 +3,7 @@ title: "Go HTTP Server"
 publishedAt: "2025-12-21"
 description: "Create a HTTP server in go"
 tags: ["Go","server"]
-repositoryUrl: "https://github.com/miketeow/adventofcode/tree/main/2025/day01"
+repositoryUrl: "https://github.com/miketeow/httpserver"
 techStack: ["Go"]
 ---
 # Introduction
@@ -12,11 +12,11 @@ This post documents my learning process about building HTTP server in Go. Since 
 
 ## Server
 
-The way to define a server is:
+Defining a basic server in Go looks like this:
 
 ```go
 package main
-import ("net/http")
+import "net/http"
 
 func main(){
 	server := &http.Server{
@@ -27,25 +27,20 @@ func main(){
 }
 ```
 
-The code is simple enough, almost similar to how it is done in javascript with express.js to create server.
+The code is simple enough, feeling very similar ot setting up a server with Express.js in JavaScript.However, since I’m new to Go, I wanted to dive into *why* we write it this way—specifically, that `&` ampersand.
 
-Although this post should focus on HTTP server. I dive deep into each line of code and try to understand pointer in practical use cases.
+In the [official go documentation](https://pkg.go.dev/net/http#hdr-Servers), the examples always use the `&` symbol before `http.Server{}`. Interestingly, if I remove the ampersand, the compiler doesn't throw an error. This is because Go is smart enough to handle the conversion, but the underlying mechanics are important.
 
-In the [official go documentation](https://pkg.go.dev/net/http#hdr-Servers) example, it also use the "&" symbol before "http.Server{}". But interestingly, if I remove the "&" ampersand and save the file, the go compiler won't show any error. This is because the compiler is smart enough to see that in the next line there is a `serve.ListenAndServe()` function, and if you hover over this function, the documentation stated that the function signature is expecting a `(s *http.Server)`, a pointer receiver, it is used to modify the original value of the server. The counter example would be `(s httpServer)`, without the dereference "*" symbol, it is a value receiver, which doesn't make sense in the case of server for two reasons:
-- server itself is huge, you typically only need one, and you don't want multiple copy of it throughout your program.
-- within the server struct there are atomic fields which doesn't allow to be copy, because it prevent race condition between two copies. If you hover over the "http.Server", you can see its documentation.
+If you hover over `server.ListenAndServe()`, you’ll see the function signature requires a pointer receiver: `func (s *Server) ListenAndServe() error`. We use a pointer here for two main reasons:
 
-```go
-type Server struct {
-  Addr string
-  ... // lots of other fields
-  inShutdown atomic.Bool // true when server is in shutdown
-  disableKeepAlives atomic.Bool
-}
-```
-But to start from first principles, it depends on how the user is expected to use this struct.
+1.  **Efficiency:** A server struct is large. You generally only need one instance, and you don't want to pass around heavy copies of it throughout your program.
+2.  **Safety:** The `http.Server` struct contains atomic fields (like `inShutdown`) to prevent race conditions. Go’s `sync/atomic` types must not be copied after first use. If you copy the server, you risk breaking the synchronization logic that keeps the server's state consistent.
 
-For example, in a simple program that have a point struct. It depends on what you want to do with it. If your program is going to be a single procedure top to bottom procedure program. Even with some for loop inside and multiple function modifying the state inside the Point struct, as long as every function happen in sequence, it is fine. But if there is going to be some goroutine in the program modifying the Point state concurrently, then we need to change the int type inside into atomic int to prevent race condition. The examples here is showing a single goroutine within the for loop to increment the point state, it might seems like there is only one goroutine, but the for loop is actually spinning up a new goroutine for every iterations, so all these goroutines are trying to increment the state at the same time, casuing race condition.
+### Why Atomics Matter
+
+To understand why the server uses atomic fields, we have to look at how Go handles concurrency. A HTTP server must handle multiple requests simultaneously. If we used standard types to track state across these concurrent requests, we’d run into race conditions.
+
+Consider a simple `Point` struct being updated by multiple goroutines:
 
 ```go
 type Point struct {
@@ -60,20 +55,20 @@ func main() {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			p.x++ // <--- This is the Race Condition!
+			p.x++ // <--- Race Condition!
 		}()
 	}
 
 	wg.Wait()
-	// Result: Likely less than 1000 (e.g., 942, 980)
+	// Result: Likely less than 1000 because updates "stepped" on each other.
 	fmt.Printf("Standard int result: %d\n", p.x)
 }
 ```
 
-To prevent the race condition, we need to change the point fields type to atomic, which prevent concurrent update.
+To fix this, we use `sync/atomic`. This ensures that even when a thousand goroutines try to increment a value at once, each operation is completed fully before the next one starts.
 
 ```go
-import ("sync/atomic")
+import "sync/atomic"
 
 type AtomicPoint struct {
 	x atomic.Int32
@@ -87,7 +82,7 @@ func main() {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			p.x.Add(1) // <--- This is an Atomic Transaction
+			p.x.Add(1) // <--- Atomic Transaction
 		}()
 	}
 
@@ -97,41 +92,68 @@ func main() {
 }
 ```
 
-So we have establish that the decision to use atomic type fields depends on the purpose of the program. A HTTP server must be able to handle multiple requests concurrently, or else it might be busy processing the first request and drop or ignore the second and third request.
+Because `http.Server` manages its internal state using these same atomic principles to handle concurrent requests safely, we must treat it as a single, shared entity—hence the pointer.
 
-Another way of seeing this, which might be easier since it is more idiomatic or easier for someone coming from a Java background is that both these lines are doing the same thing, initializing the server, but with the "new" keyword, user will have to set the field one by one separately:
+### Style Tip: `&Server{}` vs. `new(Server)`
+
+If you come from a Java or C# background, your instinct might be to use the `new` keyword. In Go, you *can* do that, but you'll rarely see it in production code.
 
 ```go
+// Both of these create a pointer to a zero-valued Server
 server1 := new(http.Server)
-server1.Addr = ":8081"
-server2 := &http.Server{
-  Addr: ":8080"
-}
+server2 := &http.Server{}
 ```
 
-## Serve Mux
+While they are functionally identical, the Go community almost exclusively prefers the **composite literal** (`&T{}`) for two reasons:
 
-ServeMux is a HTTP request multiplexer, details description can be found on the [documentation](https://pkg.go.dev/net/http#ServeMux). But the main function is to match the URL of incoming request against patterns and calls different handler. It also handles precedence and sanitise request.
+1.  **Consistency:** The `&T{}` syntax allows you to initialize fields immediately. `new(T)` only allows for zero-initialization, forcing you to use multiple lines to set up your struct.
+2.  **Visual Clarity:** The `&` symbol is a loud, clear signal that "this is a pointer." In a language where memory address vs. value matters, having that explicit symbol right at the moment of creation is preferred.
 
-There is a default serve mux within the http.Server, but **you should not use it**
+**The Rule of Thumb:** Use `&T{}` for everything. Use `new(T)` only if you are feeling nostalgic or specifically want to emphasize that you are creating an empty, zero-initialized value.
 
-This default serve mux is a global instance coming from the net/http package.
+### A Note on Memory: Escape Analysis
+
+Since we are using `&http.Server`, we are dealing with pointers. In many languages, using a pointer (or the `new` keyword) explicitly tells the computer to put that data on the **Heap**.
+
+In Go, the compiler is more intelligent. It uses a process called **Escape Analysis**.
+
+During compilation, Go looks at your code and asks: *"Does this variable 'escape' the function it was created in?"*
+
+* **The Stack:** If the variable is only used inside the function, Go keeps it on the **Stack**. This is incredibly fast because the memory is reclaimed the moment the function finishes.
+* **The Heap:** If the variable is returned from the function or shared with other parts of the program (like our server being passed around), it "escapes" to the **Heap**.
+
+The beauty of Go is that you don't have to manually decide between Stack and Heap like you do in C or C++. You simply write your code naturally. If you use the `&` operator, the compiler decides the most efficient place to put it.
+
+**Why should we care?** While we don't "control" it, we should be aware that "Heap = Work." Anything on the heap must eventually be cleaned up by the **Garbage Collector (GC)**. If we put too many things on the heap unnecessarily, our program might slow down while the GC works. By letting Go manage this, we get the safety of a managed language with performance that rivals lower-level languages.
+
+## The Dangers of the `DefaultServeMux`
+
+In Go, a `ServeMux` is an HTTP request multiplexer. Its job is to match the URL of an incoming request against a list of registered patterns and call the appropriate handler. It also handles path sanitization and pattern precedence.
+
+Go provides a `DefaultServeMux` out of the box, but **you should almost never use it.**
+
+The `DefaultServeMux` is a global variable stored in the `net/http` package. When you call package-level functions like `http.HandleFunc("/", ...)`, you are modifying this global instance.
 
 ```go
-func main(){
+func main() {
 	server := &http.Server{
 		Addr: ":8080",
 	}
-		http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+
+	// This modifies the GLOBAL mux!
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "Hello from the DEFAULT mux!")
 	})
 
-	fmt.Println("Server starting on :8080 using DefaultServeMux...")
 	server.ListenAndServe()
 }
 ```
 
-With this code, you can go to the "localhost:8080" in the browser and see the result. It works but it is unsafe. If you use this default serve mux, a malicious library author can access the global http function and do all kind of stuff such as adding a route. For example this malicious library using the global http function to add a route.
+### The "Malicious Library" Scenario
+
+The danger of a global variable is that *anyone* can change it. In Go, the `init()` function runs automatically when a package is imported. If you import a third-party library—even if you don't use any of its functions—that library can secretly register routes to your server.
+
+Imagine a malicious "analytics" package:
 
 ```go
 package analytics
@@ -142,126 +164,297 @@ import (
 )
 
 func init() {
-	// This registers to the GLOBAL mux automatically on import
+	// This registers to the GLOBAL mux automatically on import!
 	http.HandleFunc("/malicious", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusTeapot)
 		fmt.Fprint(w, "I have poisoned the global DefaultServeMux!")
 	})
 }
 ```
 
-```go
-package main
+If you import this package using the "blank import" (`_`), the library's `init()` function runs, and suddenly your server is hosting a route you didn't authorize:
 
+```go
 import (
-	"fmt"
 	"net/http"
-	_ "testproject/analytics"
-  // import the package, but not using any function from it, just want the init() to run
+	_ "testproject/analytics" // Secretly runs analytics.init()
 )
 
-func main(){
-	server := &http.Server{
-		Addr: ":8080",
-	}
-		http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, "Hello from the DEFAULT mux!")
+func main() {
+	server := &http.Server{Addr: ":8080"}
+	server.ListenAndServe()
+	// localhost:8080/malicious is now active!
+}
+```
+
+### The Solution: Explicit Muxing
+
+To prevent this, you should always create your own local `ServeMux`. By passing your custom mux into the `http.Server` struct, you ensure the server only knows about the routes you explicitly defined.
+
+```go
+func main() {
+	// 1. Create a private multiplexer
+	mux := http.NewServeMux()
+
+	// 2. Register handlers to your private mux
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "Hello from a safe, private mux!")
 	})
 
-	fmt.Println("Server starting on :8080 using DefaultServeMux...")
+	// 3. Inject the mux into the server
+	server := &http.Server{
+		Addr:    ":8080",
+		Handler: mux,
+	}
+
 	server.ListenAndServe()
 }
 ```
-You can go to the browser to access your homepage "localhost:8080" and also "localhost:8080/malicious" which is coming from the packages. To avoid this, always create your own ServerMux. After adding your own ServerMux, you can no longer access the "/malicious" path even though you imported the malicious packages
+
+Now, even if a library tries to poison the `DefaultServeMux`, your server is shielded because it isn't using the global instance.
+
+## Serving Static Files Safely
+
+If you are building a web server that needs to serve HTML, CSS, or images, Go provides a built-in `http.FileServer`. This handler takes an incoming HTTP request and maps it to the file system.
+
+### The "Development" Trap
+
+During early development, it’s tempting to serve everything from your root directory:
 
 ```go
-func main(){
+func main() {
 	mux := http.NewServeMux()
+
+	// DANGER: Serving the root directory
+	mux.Handle("/", http.FileServer(http.Dir(".")))
+
 	server := &http.Server{
-		Addr: ":8080",
+		Addr:    ":8081",
 		Handler: mux,
 	}
-}
-```
-## File Server
-
-Depending on the purpose of the project, if it is a web server, Go has built-in "http.FileServer" to HTTP request with the contents of the file system at root. During development, user can simply use "http.FileServer(http.Dir("."))"" to access the index.html that is in the same level as the "main.go" file in the project :
-
-```go
-func main(){
-	mux := http.NewServeMux()
-	server := &http.Server{
-		Addr: ":8081",
-		Handler: mux,
-	}
-
-	mux.Handle("/",http.FileServer(http.Dir(".")))
-
-	fmt.Println("Server starting on :8081")
 	server.ListenAndServe()
 }
 ```
-But there is a flaw in directly using "http.Dir(".")", because malicious user can potentially access your entire source code by going to localhost:8081/main.go - yes it is accessible this way if you use "http.Dir(".")". So to be safe, we need to create another "public" folder in the project and set the file server path to the public folder, making sure the backend source code is separate from the html code. Because visitor cannot go "up" into private files.
 
-The safe way:
+This works for seeing your `index.html`, but it creates a massive security flaw. A malicious user could visit `localhost:8081/main.go` or `localhost:8081/go.mod` and read your entire backend source code.
+
+
+
+### The Secure Approach: Isolation and StripPrefix
+
+To secure the server, you must isolate your public assets into a dedicated folder (e.g., `./public`) and use `http.StripPrefix`.
+
+The `http.StripPrefix` function is necessary because of how the `FileServer` looks for files. If a user visits <Url>localhost:3000:/app</Url>, the `FileServer` will try to find a file at <File>./public/app/index.html</File>. Since the <File>/app</File> folder doesn't exist inside <File>/public</File>, it would return a 404. We need to strip the `/app/` prefix so the `FileServer` only sees <File>index.html</File>.
 
 ```go
-func main(){
+func main() {
 	mux := http.NewServeMux()
-	server := &http.Server{
-		Addr: ":8081",
-		Handler: mux,
-	}
 
+	// 1. Create a handler that only looks inside the "public" folder
 	fsHandler := http.FileServer(http.Dir("./public"))
 
-	mux.Handle("/app/",http.StripPrefix("/app/",fsHandler))
+	// 2. Use StripPrefix to remove "/app/" from the request URL
+	// before it reaches the file server.
+	mux.Handle("/app/", http.StripPrefix("/app/", fsHandler))
+
+	server := &http.Server{
+		Addr:    ":8081",
+		Handler: mux,
+	}
 
 	fmt.Println("Server starting on :8081")
 	server.ListenAndServe()
 }
 ```
 
-With this setup, a visitor can only visit the url - "yoursite.com/app" which can only access the public folder within your project. The visitor can never visit anything outside of the public folder.
+With this setup, the visitor is "jailed" within the `./public` folder. They can access `yoursite.com/app/`, but they can never move "up" the directory tree to access your private source code or environment variables.
 
-## Stateful Handler
+## Stateful Handlers: Moving Beyond Global Variables
 
-A classic way of learning any new language or project is printing hello world and increasing a counter. Let's start with the simple endpoint which return hello world.
-
-```go
-	mux.HandleFunc("/app/hello",func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Add("Content-Type", "text/plain; charset=utf-8")
-		w.WriteHeader(200)
-		data := []byte("Hello World")
-		w.Write(data)
-	})
-```
-In this example, we use "HandleFunc()" instead of "Handle()" because "HandleFunc()" can accepts simple function as the second parameter, as long as it has the correct function signature.
-
-To increase counter by 1, you can use similar function, but we can only print the number to console instead of writing it as data on the page. Because converting type int32 into []byte require some extra function, but we won't be doing it because this code is just to show it is technically possible to use a global variable to increment counter, but eventually it would cause maintanence nightmare. And the best practice here is to use define a struct :
+A classic "Hello World" in Go looks like this:
 
 ```go
-  var globalHits atomic.Int32
-	mux.HandleFunc("/app/hello",func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Add("Content-Type", "text/plain; charset=utf-8")
-		w.WriteHeader(200)
-		globalHits.Add(1)
-		fmt.Println(globalHits.Load())
-	})
+mux.HandleFunc("/app/hello", func(w http.ResponseWriter, r *http.Request) {
+    w.Header().Add("Content-Type", "text/plain; charset=utf-8")
+    w.WriteHeader(http.StatusOK)
+    w.Write([]byte("Hello World"))
+})
 ```
-In the browser, go to the path localhost:8081/app/hello, the page will be blank. Keep refreshing the page, and you can see the terminal in editor where the server is running show the number value 1, 2, 3 ... incrementing everytime you refresh the page.
 
-This does not work well because it doesn't scale. Since we are developing a server, later on there will be lots of different state that is relevant to the server, it would be a better practice to simply define them within a struct, instead of multiple different variables. If everything relevant is define within the struct, we can then look at the function signature and immediately understand that this method is used on this particular struct, instead of reading every lines of code in the function, and trying to figure out what it is used for.
+But what if we want to track state—like a counter that increments every time a user visits? Your first instinct might be to use a global variable:
 
 ```go
 var globalHits atomic.Int32
-var dbUrl string
-var startTime time.Time
 
-// it is better to define everything in struct instead of defining all separately
+func main() {
+    // ...
+    mux.HandleFunc("/app/hits", func(w http.ResponseWriter, r *http.Request) {
+        globalHits.Add(1)
+        fmt.Println(globalHits.Load())
+    })
+}
+```
+While this works, it’s a maintenance nightmare. As your app grows, you’ll have database connections, platform settings, and multiple counters. Scattering these as globals makes your code hard to test and even harder to read.
+
+### The "Shared Brain": The apiConfig Struct
+
+The idiomatic Go solution is to bundle everything related to your app’s state into a single struct. We then turn our handlers into **methods** of that struct using a "pointer receiver."
+
+```go
 type apiConfig struct {
-  fileserverHits atomic.Int32
-	query          *database.Queries
-	Platform       string
+    fileserverHits atomic.Int32
+    dbQueries      *database.Queries
+    platform       string
+}
+
+// This method is "bound" to our config struct
+func (cfg *apiConfig) handlerMetrics(w http.ResponseWriter, r *http.Request) {
+    cfg.fileserverHits.Add(1)
+    w.WriteHeader(http.StatusOK)
+    w.Write([]byte(fmt.Sprintf("Hits: %d", cfg.fileserverHits.Load())))
+}
+```
+
+By doing this, we achieve **Dependency Injection**. Any function attached to `apiConfig` immediately knows how to talk to the database or increment the hit counter without needing global variables.
+
+---
+
+## Middleware: The "Handler Factory"
+
+A standalone handler is great, but what if you want to count hits on *every* request—including requests for static files? You don’t want to manually add `cfg.fileserverHits.Add(1)` to every single route. This is where **Middleware** comes in.
+
+Think of middleware as a **factory**. It takes an existing handler, wraps it in a "costume," and returns a new handler. The signature looks like this: `func(next http.Handler) http.Handler`.
+
+### Building the Metric Middleware
+
+Here is how we turn our hit counter into a bridge that sits between the server and the final destination:
+
+```go
+func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
+    // We return a "HandlerFunc" which is a type cast that
+    // gives our anonymous function the required ServeHTTP method.
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        cfg.fileserverHits.Add(1) // 1. Do our work (increment counter)
+        next.ServeHTTP(w, r)      // 2. Pass the baton to the next handler
+    })
+}
+```
+
+### The "Domino Effect" in Reality
+
+It is important to remember that the Go server itself has no idea what "middleware" is. When we write this line:
+
+`mux.Handle("/app/", cfg.middlewareMetricsInc(fsHandler))`
+
+The function `middlewareMetricsInc` runs **immediately** (at startup), creates an anonymous function that "captures" the `fsHandler`, and hands that anonymous function to the `ServeMux`.
+
+When a request actually arrives, here is the real sequence:
+
+1.  **The Server calls the Product:** The server executes the `ServeHTTP` method of the **anonymous function** created by our factory.
+2.  **The Work Happens:** Inside that anonymous function, our code increments the counter: `cfg.fileserverHits.Add(1)`.
+3.  **The Baton Pass:** The anonymous function then calls `next.ServeHTTP(w, r)`. Because it "captured" the `fsHandler` earlier, this call triggers the FileServer's logic.
+
+
+This is why we call it a "chain." Each handler is responsible for calling the next one. If our anonymous function forgot to call `next.ServeHTTP`, the request would simply stop there—the "domino" effect would be broken, and the FileServer would never run.
+
+## Database
+
+### Docker
+I use docker to spin up a postgresdb for development.Although my Go application perform a "db.Ping()" at startup, I also implement a healthcheck using "pg_isready" to provide a higher level of infrastructure reliability. It allows the container to monitor the internal state of database, making sure the application services only initialises once the database is fully ready to accept traffic, preventing "startup race condition"
+
+```yml
+services:
+  db:
+    image: postgres:18-alpine
+    container_name: testserver-db
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=test_chirpy
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d test_chirpy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
+
+```
+
+### Goose and SQLC
+
+It is Go standard practice to separate build-time tools from runtime dependencies. We need to installed [goose](https://github.com/pressly/goose)
+for version-controlled migrations and [sqlc](https://docs.sqlc.dev/en/latest/overview/install.html) to generate type-safe database code. This approach ensures that the application binaries remain clean, contain only the necessary drivers [pq](https://github.com/lib/pq) and standard library "database/sql"
+
+Create a "sqlc.yaml" in the root folder, so that sqlc know where to look for the schema and queries, and where to create the generated type-safe code file.
+
+```yaml
+version: "2"
+sql:
+  - schema: "sql/schema"
+    queries: "sql/queries"
+    engine: "postgresql"
+    gen:
+      go:
+        package: "database"
+        out: "internal/database"
+
+```
+### Migrations
+
+We can start defining the first table in sql/schema folder. The first table would be a user table. Create a file named "001_users.sql", it is a conventional best practice to name these migration sql file with numbering sequence.
+
+```sql
+-- +goose Up
+CREATE TABLE users (
+    id UUID PRIMARY KEY,
+    created_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL,
+    email TEXT UNIQUE NOT NULL,
+    hashed_password TEXT NOT NULL DEFAULT 'unset'
+);
+
+-- +goose Down
+DROP TABLE users;
+```
+
+Noticed we inlcude the "goose up" and "goose down" command which is required so that goose can understand what query to run when you instruct it to run migration up with the command `goose postgres "{$DB_URL}" up`. In professional environment, we must always provide a way to undo the change, hence the "goose down" query is there when something failed with the latest query, and we need to reverse the change.
+
+After running the goose migration up command, goose will connect to the database, create a special table called "goose_db_version", which is used to track migrations, and then execute the "001_users.sql" file, which will create the user table.
+
+Next we can proceed to write sql query in sql/query users.sql to insert and select user.
+
+```sql
+-- name: CreateUser :one
+INSERT INTO users (id, created_at, updated_at, email, hashed_password)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING *;
+
+-- name: GetUserByEmail :one
+SELECT * FROM users WHERE email = $1;
+
+```
+
+The syntax "RETURNING *" is a special syntax in modern postgres. In old school sql, an "INSERT" statement is a blind statement, it doesn't return anything, back then we have to do two separate action, INSERT the user, and then SELECT the user we just inserted using the ID, so that it can then return the new user. This is a two-round trip,
+
+Modern postgres intorduced RETURNING clause so that INSERT, UPDATE and DELETE also include the behaviour of SELECT. It can be either RETURNING ID which is just give back the newly created object's id, or RETURNING * which will return the entire data. The entire creation and returning process happened in a single atomic transaction in database. It is faster and guaranteed to be accurate.
+
+### Data Transfer Object
+
+When we are using sqlc to generate the type safe code, it actually generate a few different files. And one of the main one is "models.go" in the /internal/database folder. It basically look at what we write in sql schema, how we define the table, and then translate it from sql table to a go struct.
+
+Before running the "sqlc generate" command, we can optionally add one more config in the sqlc.yaml file, so that it not only generate the struct, it also add the json tag for every fields.
+
+```go title="models.go"
+type User struct {
+	ID             uuid.UUID `json:"id"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+	Email          string    `json:"email"`
+	HashedPassword string    `json:"hashed_password"`
 }
 ```

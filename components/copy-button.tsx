@@ -26,7 +26,7 @@ export function CopyButton({ text, className }: CopyButtonProps) {
       variant="outline"
       size="icon"
       className={cn(
-        "bg-muted/50 hover:bg-muted absolute top-4 right-4 h-8 w-8 opacity-0 transition-opacity group-hover:opacity-100",
+        "bg-muted/50 hover:bg-muted absolute top-10 right-4 h-8 w-8 opacity-0 transition-opacity group-hover:opacity-100",
         className
       )}
       onClick={copy}
