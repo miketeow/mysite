@@ -1,13 +1,18 @@
 import Link from "next/link";
 import { ComponentProps } from "react";
 
-import { ArrowUpRight, FileCode, Folder } from "lucide-react";
+import { ArrowUpRight, ChevronDown, FileCode, Folder } from "lucide-react";
 import type { MDXComponents } from "mdx/types";
 
 import CodeGroup from "@/components/code-group";
 import { cn } from "@/lib/utils";
 
 import { CopyButton } from "./components/copy-button";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "./components/ui/collapsible";
 
 export function useMDXComponents(): MDXComponents {
   return {
@@ -256,5 +261,24 @@ export function useMDXComponents(): MDXComponents {
         </code>
       );
     },
+
+    DeepDive: ({
+      title,
+      children,
+    }: {
+      title: string;
+      children: React.ReactNode;
+    }) => (
+      <Collapsible className="group border-border my-6 rounded-lg border bg-zinc-50 dark:bg-zinc-900/50">
+        <CollapsibleTrigger className="hover:text-foreground/80 data-[state=open]:border-border/50 flex w-full items-center justify-between px-4 py-3 text-left font-medium data-[state=open]:border-b">
+          <span className="text-sm">{title}</span>
+          <ChevronDown className="text-muted-foreground h-4 w-4 transition-transform duration-200 group-data-[state=open]:rotate-180" />
+        </CollapsibleTrigger>
+        <CollapsibleContent className="text-muted-foreground px-4 py-3 text-sm">
+          {/* Add a div to handle internal spacing if needed */}
+          <div className="prose-sm dark:prose-invert">{children}</div>
+        </CollapsibleContent>
+      </Collapsible>
+    ),
   };
 }

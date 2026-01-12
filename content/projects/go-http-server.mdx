@@ -8,7 +8,7 @@ techStack: ["Go"]
 ---
 # Introduction
 
-This post documents my learning process about building HTTP server in Go. Since I am still fairly new to Go, this post will contains not only concept about HTTP server, but also some Go coding style and practice that I discover and learned along the way.
+This post documents my learning process regarding building an HTTP server in Go. Since I am still fairly new to Go, this post contains not only concepts about HTTP servers, but also some Go coding styles and practices that I discovered along the way.
 
 ## Server
 
@@ -27,18 +27,20 @@ func main(){
 }
 ```
 
-The code is simple enough, feeling very similar ot setting up a server with Express.js in JavaScript.However, since I’m new to Go, I wanted to dive into *why* we write it this way—specifically, that `&` ampersand.
+The code is simple enough, feeling very similar to setting up a server with Express.js in JavaScript. However, since I’m new to Go, I wanted to dive into *why* we write it this way—specifically, that `&` ampersand.
 
-In the [official go documentation](https://pkg.go.dev/net/http#hdr-Servers), the examples always use the `&` symbol before `http.Server{}`. Interestingly, if I remove the ampersand, the compiler doesn't throw an error. This is because Go is smart enough to handle the conversion, but the underlying mechanics are important.
+In the [official Go documentation](https://pkg.go.dev/net/http#hdr-Servers), the examples always use the `&` symbol before `http.Server{}`. Interestingly, if I remove the ampersand, the compiler doesn't throw an error. This is because Go is smart enough to handle the conversion, but the underlying mechanics are important.
 
-If you hover over `server.ListenAndServe()`, you’ll see the function signature requires a pointer receiver: `func (s *Server) ListenAndServe() error`. We use a pointer here for two main reasons:
+If you hover over `server.ListenAndServe()`, you’ll see the function signature requires a pointer receiver: `func (s *Server) ListenAndServe() error`.
+
+We use a pointer here for two main reasons:
 
 1.  **Efficiency:** A server struct is large. You generally only need one instance, and you don't want to pass around heavy copies of it throughout your program.
 2.  **Safety:** The `http.Server` struct contains atomic fields (like `inShutdown`) to prevent race conditions. Go’s `sync/atomic` types must not be copied after first use. If you copy the server, you risk breaking the synchronization logic that keeps the server's state consistent.
 
-### Why Atomics Matter
+<DeepDive title="Why Atomics Matter">
 
-To understand why the server uses atomic fields, we have to look at how Go handles concurrency. A HTTP server must handle multiple requests simultaneously. If we used standard types to track state across these concurrent requests, we’d run into race conditions.
+To understand why the server uses atomic fields, we have to look at how Go handles concurrency. An HTTP server must handle multiple requests simultaneously. If we used standard types to track state across these concurrent requests, we’d run into race conditions.
 
 Consider a simple `Point` struct being updated by multiple goroutines:
 
@@ -93,6 +95,7 @@ func main() {
 ```
 
 Because `http.Server` manages its internal state using these same atomic principles to handle concurrent requests safely, we must treat it as a single, shared entity—hence the pointer.
+</DeepDive>
 
 ### Style Tip: `&Server{}` vs. `new(Server)`
 
@@ -115,9 +118,7 @@ While they are functionally identical, the Go community almost exclusively prefe
 
 Since we are using `&http.Server`, we are dealing with pointers. In many languages, using a pointer (or the `new` keyword) explicitly tells the computer to put that data on the **Heap**.
 
-In Go, the compiler is more intelligent. It uses a process called **Escape Analysis**.
-
-During compilation, Go looks at your code and asks: *"Does this variable 'escape' the function it was created in?"*
+In Go, the compiler is more intelligent. It uses a process called **Escape Analysis**. During compilation, Go looks at your code and asks: *"Does this variable 'escape' the function it was created in?"*
 
 * **The Stack:** If the variable is only used inside the function, Go keeps it on the **Stack**. This is incredibly fast because the memory is reclaimed the moment the function finishes.
 * **The Heap:** If the variable is returned from the function or shared with other parts of the program (like our server being passed around), it "escapes" to the **Heap**.
@@ -235,15 +236,13 @@ func main() {
 }
 ```
 
-This works for seeing your `index.html`, but it creates a massive security flaw. A malicious user could visit `localhost:8081/main.go` or `localhost:8081/go.mod` and read your entire backend source code.
-
-
+This works for seeing your <File>index.html</File>, but it creates a massive security flaw. A malicious user could visit <Url>localhost:8081/main.go</Url> or <Url>localhost:8081/go.mod</Url> and read your entire backend source code.
 
 ### The Secure Approach: Isolation and StripPrefix
 
-To secure the server, you must isolate your public assets into a dedicated folder (e.g., `./public`) and use `http.StripPrefix`.
+To secure the server, you must isolate your public assets into a dedicated folder like <File>./public</File> and use `http.StripPrefix`. The `http.StripPrefix` function is necessary because of how the `FileServer` looks for files.
 
-The `http.StripPrefix` function is necessary because of how the `FileServer` looks for files. If a user visits <Url>localhost:3000:/app</Url>, the `FileServer` will try to find a file at <File>./public/app/index.html</File>. Since the <File>/app</File> folder doesn't exist inside <File>/public</File>, it would return a 404. We need to strip the `/app/` prefix so the `FileServer` only sees <File>index.html</File>.
+If a user visits <Url>localhost:3000:/app</Url>, the `FileServer` will try to find a file at <File>./public/app/index.html</File>. Since the <File>/app</File> folder doesn't exist inside <File>/public</File>, it would return a 404. We need to strip the `/app/` prefix so the `FileServer` only sees <File>index.html</File>.
 
 ```go
 func main() {
@@ -266,7 +265,7 @@ func main() {
 }
 ```
 
-With this setup, the visitor is "jailed" within the `./public` folder. They can access `yoursite.com/app/`, but they can never move "up" the directory tree to access your private source code or environment variables.
+With this setup, the visitor is "jailed" within the <File>./public</File> folder. They can access <Url>yoursite.com/app/</Url>, but they can never move "up" the directory tree to access your private source code or environment variables.
 
 ## Stateful Handlers: Moving Beyond Global Variables
 
@@ -293,6 +292,7 @@ func main() {
     })
 }
 ```
+
 While this works, it’s a maintenance nightmare. As your app grows, you’ll have database connections, platform settings, and multiple counters. Scattering these as globals makes your code hard to test and even harder to read.
 
 ### The "Shared Brain": The apiConfig Struct
@@ -302,7 +302,7 @@ The idiomatic Go solution is to bundle everything related to your app’s state 
 ```go
 type apiConfig struct {
     fileserverHits atomic.Int32
-    dbQueries      *database.Queries
+    query      *database.Queries
     platform       string
 }
 
@@ -345,21 +345,21 @@ It is important to remember that the Go server itself has no idea what "middlewa
 
 `mux.Handle("/app/", cfg.middlewareMetricsInc(fsHandler))`
 
-The function `middlewareMetricsInc` runs **immediately** (at startup), creates an anonymous function that "captures" the `fsHandler`, and hands that anonymous function to the `ServeMux`.
-
-When a request actually arrives, here is the real sequence:
+The function `middlewareMetricsInc` runs **immediately** (at startup), creates an anonymous function that "captures" the `fsHandler`, and hands that anonymous function to the `ServeMux`. When a request actually arrives, here is the real sequence:
 
 1.  **The Server calls the Product:** The server executes the `ServeHTTP` method of the **anonymous function** created by our factory.
 2.  **The Work Happens:** Inside that anonymous function, our code increments the counter: `cfg.fileserverHits.Add(1)`.
 3.  **The Baton Pass:** The anonymous function then calls `next.ServeHTTP(w, r)`. Because it "captured" the `fsHandler` earlier, this call triggers the FileServer's logic.
 
+This is why we call it a chain. Each handler is responsible for calling the next one. If our anonymous function forgot to call `next.ServeHTTP`, the request would simply stop there—the "domino" effect would be broken, and the FileServer would never run.
 
-This is why we call it a "chain." Each handler is responsible for calling the next one. If our anonymous function forgot to call `next.ServeHTTP`, the request would simply stop there—the "domino" effect would be broken, and the FileServer would never run.
-
-## Database
+## Database Infrastructure
 
 ### Docker
-I use docker to spin up a postgresdb for development.Although my Go application perform a "db.Ping()" at startup, I also implement a healthcheck using "pg_isready" to provide a higher level of infrastructure reliability. It allows the container to monitor the internal state of database, making sure the application services only initialises once the database is fully ready to accept traffic, preventing "startup race condition"
+
+For development, I use Docker to spin up a PostgreSQL instance. While my Go application performs a `db.Ping()` at startup, I also implemented a Docker-level `healthcheck` using `pg_isready`.
+
+This provides a higher level of infrastructure reliability. It prevents the "startup race condition" where the Go app tries to connect before the database is actually ready to accept connections. By adding this check, Docker ensures the database service is "Healthy" before dependent services attempt to communicate with it.
 
 ```yml
 services:
@@ -385,12 +385,16 @@ volumes:
 
 ```
 
-### Goose and SQLC
+### Tooling: Goose and SQLC
 
-It is Go standard practice to separate build-time tools from runtime dependencies. We need to installed [goose](https://github.com/pressly/goose)
-for version-controlled migrations and [sqlc](https://docs.sqlc.dev/en/latest/overview/install.html) to generate type-safe database code. This approach ensures that the application binaries remain clean, contain only the necessary drivers [pq](https://github.com/lib/pq) and standard library "database/sql"
+In Go, it is standard practice to separate build-time tools from runtime dependencies. To keep my application binaries clean—containing only the standard library `database/sql` and the necessary driver `lib/pq`—I use two specific tools:
 
-Create a "sqlc.yaml" in the root folder, so that sqlc know where to look for the schema and queries, and where to create the generated type-safe code file.
+1.  **[Goose](https://github.com/pressly/goose):** For version-controlled database migrations.
+2.  **[SQLC](https://docs.sqlc.dev/en/latest/overview/install.html):** To generate type-safe Go code from raw SQL.
+
+This setup prevents "ORM bloat" and gives us the performance of raw SQL with the safety of a compiled language.
+
+Configuration for `sqlc` lives in <File>sqlc.yaml</File>, telling it where to find my queries and where to output the Go code:
 
 ```yaml
 version: "2"
@@ -404,9 +408,10 @@ sql:
         out: "internal/database"
 
 ```
+
 ### Migrations
 
-We can start defining the first table in sql/schema folder. The first table would be a user table. Create a file named "001_users.sql", it is a conventional best practice to name these migration sql file with numbering sequence.
+We define our schema in <File>sql/schema</File>. Standard convention is to number files sequentially like <File>001_users.sql</File> so the tool knows the order of execution.
 
 ```sql
 -- +goose Up
@@ -422,13 +427,18 @@ CREATE TABLE users (
 DROP TABLE users;
 ```
 
-Noticed we inlcude the "goose up" and "goose down" command which is required so that goose can understand what query to run when you instruct it to run migration up with the command `goose postgres "{$DB_URL}" up`. In professional environment, we must always provide a way to undo the change, hence the "goose down" query is there when something failed with the latest query, and we need to reverse the change.
+The annotations `-- +goose Up` and `-- +goose Down` are directives for the tool.
 
-After running the goose migration up command, goose will connect to the database, create a special table called "goose_db_version", which is used to track migrations, and then execute the "001_users.sql" file, which will create the user table.
+* **Up:** Defines how to apply the change.
+* **Down:** Defines how to undo the change.
 
-Next we can proceed to write sql query in sql/query users.sql to insert and select user.
+In a professional environment, the "Down" migration is critical for rolling back changes if a deployment fails. When we run `goose postgres "{$DB_URL}" up`, Goose creates a `goose_db_version` table to track which migrations have already run, ensuring we don't apply the same change twice.
 
-```sql
+### SQL Queries
+
+With the table created, we can write our queries in <File>sql/queries/users.sql</File>.
+
+```sql title="users.sql"
 -- name: CreateUser :one
 INSERT INTO users (id, created_at, updated_at, email, hashed_password)
 VALUES ($1, $2, $3, $4, $5)
@@ -439,22 +449,162 @@ SELECT * FROM users WHERE email = $1;
 
 ```
 
-The syntax "RETURNING *" is a special syntax in modern postgres. In old school sql, an "INSERT" statement is a blind statement, it doesn't return anything, back then we have to do two separate action, INSERT the user, and then SELECT the user we just inserted using the ID, so that it can then return the new user. This is a two-round trip,
+Note the `RETURNING *` clause. In older SQL, an `INSERT` was "blind"—it didn't return data. You would have to insert the row and then immediately run a `SELECT` to get the data back (a two-round-trip process).
 
-Modern postgres intorduced RETURNING clause so that INSERT, UPDATE and DELETE also include the behaviour of SELECT. It can be either RETURNING ID which is just give back the newly created object's id, or RETURNING * which will return the entire data. The entire creation and returning process happened in a single atomic transaction in database. It is faster and guaranteed to be accurate.
+Modern PostgreSQL allows `INSERT`, `UPDATE`, and `DELETE` statements to behave like `SELECT`s. By using `RETURNING *`, the database inserts the row and returns the full object in a single, atomic transaction. This is faster and guarantees that the data we get back is exactly what was stored.
 
-### Data Transfer Object
+### Wiring it up in Main
 
-When we are using sqlc to generate the type safe code, it actually generate a few different files. And one of the main one is "models.go" in the /internal/database folder. It basically look at what we write in sql schema, how we define the table, and then translate it from sql table to a go struct.
+Finally, we need to initialize the database connection in <File>main.go</File> and inject it into our `apiConfig` struct.
 
-Before running the "sqlc generate" command, we can optionally add one more config in the sqlc.yaml file, so that it not only generate the struct, it also add the json tag for every fields.
+**Important:** We must import the postgres driver `lib/pq` using the blank identifier `_`. This registers the driver with Go's `database/sql` package without us needing to call its functions directly.
+
+```go title="main.go"
+// top of the file
+import (
+  "os"
+	"sync/atomic"
+  "database/sql"
+  "time"
+	"github.com/google/uuid"
+	"github.com/joho/godotenv"
+	"github.com/mengkhaiteow/httpserver/internal/database"
+  _ "github.com/lib/pq"
+)
+
+type apiConfig struct {
+	fileserverHits atomic.Int32
+	query          *database.Queries
+}
+
+func main() {
+	godotenv.Load()
+	dbURL := os.Getenv("DB_URL")
+	db, err := sql.Open("postgres", dbURL)
+	err = db.Ping()
+	if err != nil {
+		log.Fatal("Could not connect to DB:", err)
+		return
+	}
+	dbQueries := database.New(db)
+	apiCfg := &apiConfig{
+		fileserverHits: atomic.Int32{},
+		query:          dbQueries,
+	}
+}
+
+```
+
+## The User Handler: Parsing and Creating
+
+Now that `sqlc` has generated our type-safe database functions, we can wire them up in <File>main.go</File>.
+
+### Parsing JSON
+
+Since we are building an HTTP server, we deal with streaming data. To read the request body, we use a `json.Decoder`. Unlike `json.Unmarshal` (which requires loading the whole JSON into memory first), the decoder processes the stream directly from the request body, which is more efficient for an HTTP server.
+
+We define a struct to match the expected JSON structure. (Note: You can define this struct inside the handler function to keep the global namespace clean).
+
+```go title="main.go"
+
+func (cfg *apiConfig) handleUsersCreate(w http.ResponseWriter, r *http.Request) {
+	type parameters struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+
+	decoder := json.NewDecoder(r.Body)
+	params := parameters{}
+	err := decoder.Decode(&params)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Invalid request payload")
+		return
+	}
+
+    // ... continued below
+}
+```
+
+### Context: The "Kill Switch"
+
+When calling our database function, you'll notice we pass `r.Context()`:
+
+```go title="main.go"
+	hashedPassword, err := auth.HashPassword(params.Password)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't hash password")
+		return
+	}
+
+	user, err := cfg.query.CreateUser(r.Context(), database.CreateUserParams{
+		ID:             uuid.New(), // Generate the ID here!
+		CreatedAt:      time.Now().UTC(),
+		UpdatedAt:      time.Now().UTC(),
+		Email:          params.Email,
+		HashedPassword: hashedPassword,
+	})
+```
+
+Why pass context? `Context` acts as a **kill switch** for the request.
+
+Imagine a user sends a complex search query that takes the database 30 seconds to process. If the user gets impatient and closes their browser tab after 2 seconds, the request is cancelled.
+
+1.  The server receives the cancellation signal.
+2.  The `r.Context()` becomes "Done".
+3.  The database driver sees this and immediately stops the query, freeing up resources.
+
+Without context, your database would keep crunching numbers for a ghost user.
+
+### The Importance of DTOs (Data Transfer Objects)
+
+After creating the user, we need to return the data. It is tempting to simply return the struct generated by `sqlc`:
 
 ```go title="models.go"
+// Generated by SQLC
 type User struct {
 	ID             uuid.UUID `json:"id"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
 	Email          string    `json:"email"`
-	HashedPassword string    `json:"hashed_password"`
+	HashedPassword string    `json:"hashed_password"` // <--- DANGER
+}
+```
+
+However, we should **never** return this directly. We need to create a custom "Response Struct" (or DTO) for three reasons:
+
+**1. Security: The Leaky Abstraction**
+The internal model contains implementation details like `HashedPassword`. Even if it's hashed, you never want to expose security internals to the frontend.
+
+**2. Aggregated Fields**
+Internal database normalization rules don't always match what the UI needs.
+
+* **Database:** Stores `first_name` and `last_name` columns.
+* **API:** Returns a computed `full_name` field.
+
+By using a DTO, we can format the data for the user without cluttering the database with redundant columns.
+
+**3. API Stability: Compile vs. Runtime Errors**
+This is the most subtle but powerful reason. Imagine we rename the database column `content` to `message`.
+
+* **Without DTO:** `sqlc` updates the JSON tag automatically. The API response changes from `{"content": "..."}` to `{"message": "..."}`. The frontend code (which expects `content`) breaks silently in production—a dangerous **Runtime Error**.
+* **With DTO:** You have to manually map `dbUser.Message` to `dtoUser.Content`. When you rename the DB column, your mapping code breaks immediately because the field `Message` doesn't exist on the struct yet. The compiler forces you to fix it—a strict **Compile-time Error**.
+
+We would always rather fix a bug at compile time than have it crash in production.
+
+```go title="main.go"
+// Define a clean response struct
+type UserResponse struct {
+	ID        uuid.UUID `json:"id"`
+	Email     string    `json:"email"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// Map internal -> external
+func (cfg *apiConfig) handleUsersCreate(w http.ResponseWriter, r *http.Request) {
+    // ... create user logic ...
+
+    respondWithJSON(w, http.StatusCreated, UserResponse{
+        ID:        user.ID,
+        Email:     user.Email,
+        CreatedAt: user.CreatedAt,
+    })
 }
 ```
