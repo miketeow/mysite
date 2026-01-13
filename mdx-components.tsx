@@ -270,7 +270,7 @@ export function useMDXComponents(): MDXComponents {
       children: React.ReactNode;
     }) => (
       <Collapsible className="group border-border my-6 rounded-lg border bg-zinc-50 dark:bg-zinc-900/50">
-        <CollapsibleTrigger className="hover:text-foreground/80 data-[state=open]:border-border/50 flex w-full items-center justify-between px-4 py-3 text-left font-medium data-[state=open]:border-b">
+        <CollapsibleTrigger className="hover:text-foreground/80 data-[state=open]:border-border/50 flex w-full cursor-pointer items-center justify-between px-4 py-3 text-left font-medium data-[state=open]:border-b">
           <span className="text-sm">{title}</span>
           <ChevronDown className="text-muted-foreground h-4 w-4 transition-transform duration-200 group-data-[state=open]:rotate-180" />
         </CollapsibleTrigger>

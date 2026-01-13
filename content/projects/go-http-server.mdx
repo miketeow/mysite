@@ -40,61 +40,49 @@ We use a pointer here for two main reasons:
 
 <DeepDive title="Why Atomics Matter">
 
-To understand why the server uses atomic fields, we have to look at how Go handles concurrency. An HTTP server must handle multiple requests simultaneously. If we used standard types to track state across these concurrent requests, we’d run into race conditions.
+**The Hidden Danger of `hits++`**
 
-Consider a simple `Point` struct being updated by multiple goroutines:
+To understand why we need `atomic` types, we have to look at what the computer actually does when you write `count++`. To us, it looks like one instruction. To the CPU, it is actually three separate steps:
+
+1.  **Read:** Get the current value of `count` from memory `5`.
+2.  **Modify:** Add `1` to that value, it becomes `6`.
+3.  **Write:** Save the new value `6` back to memory.
+
+**The Race Condition**
+In a web server, two requests can happen at the *exact* same nanosecond.
+If **Request A** and **Request B** both read the value `5` at the same time, they will both calculate `6` and both write `6`. You received two requests, but your counter only went up by one.
+
+**The Solution: Atomic Transactions**
+We fix this by using the `sync/atomic` package. An "atomic" operation guarantees that once the CPU starts the "Read-Modify-Write" cycle, no other process can interrupt it until it is finished.
+
+Here is the comparison:
 
 ```go
-type Point struct {
-	x int
-}
+// ❌ The Race Condition (Standard Int)
+// If two requests hit this handler at the exact same time,
+// they might both read 'hits' as 10, and both set it to 11.
+// The extra count is lost forever.
+var hits int
 
-func main() {
-	p := Point{}
-	var wg sync.WaitGroup
-
-	for i := 0; i < 1000; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			p.x++ // <--- Race Condition!
-		}()
-	}
-
-	wg.Wait()
-	// Result: Likely less than 1000 because updates "stepped" on each other.
-	fmt.Printf("Standard int result: %d\n", p.x)
+func handler() {
+    hits++
 }
 ```
 
-To fix this, we use `sync/atomic`. This ensures that even when a thousand goroutines try to increment a value at once, each operation is completed fully before the next one starts.
-
 ```go
-import "sync/atomic"
+// ✅ The Fix (Atomic Int)
+// The "Add" method locks the variable during the update.
+// It forces Request B to wait until Request A is fully finished.
+// The count is guaranteed to be correct.
+var atomicHits atomic.Int32
 
-type AtomicPoint struct {
-	x atomic.Int32
-}
-
-func main() {
-	p := AtomicPoint{}
-	var wg sync.WaitGroup
-
-	for i := 0; i < 1000; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			p.x.Add(1) // <--- Atomic Transaction
-		}()
-	}
-
-	wg.Wait()
-	// Result: Guaranteed to be 1000
-	fmt.Printf("Atomic int result: %d\n", p.x.Load())
+func handler() {
+    atomicHits.Add(1)
 }
 ```
 
 Because `http.Server` manages its internal state using these same atomic principles to handle concurrent requests safely, we must treat it as a single, shared entity—hence the pointer.
+
 </DeepDive>
 
 ### Style Tip: `&Server{}` vs. `new(Server)`

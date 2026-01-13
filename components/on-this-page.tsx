@@ -151,48 +151,49 @@ export default function OnThisPage() {
         </h4>
 
         {/* navigation container */}
+        <div className="custom-scrollbar max-h-[75vh] overflow-y-auto pr-4">
+          <nav className="relative" ref={navRef}>
+            {/* the track - gray line on the left */}
+            <div className="absolute top-0 left-0 h-full w-px bg-zinc-200 dark:bg-zinc-800" />
 
-        <nav className="relative" ref={navRef}>
-          {/* the track - gray line on the left */}
-          <div className="absolute top-0 left-0 h-full w-px bg-zinc-200 dark:bg-zinc-800" />
+            {/* the marker - sliding color line */}
+            <div
+              className="bg-primary absolute left-0 w-0.5 transition-all duration-300 ease-in-out"
+              style={{
+                top: markerStyle.top,
+                height: markerStyle.height,
+                opacity: markerStyle.opacity,
+              }}
+            />
 
-          {/* the marker - sliding color line */}
-          <div
-            className="bg-primary absolute left-0 w-0.5 transition-all duration-300 ease-in-out"
-            style={{
-              top: markerStyle.top,
-              height: markerStyle.height,
-              opacity: markerStyle.opacity,
-            }}
-          />
+            <ul className="flex flex-col text-sm">
+              {links.map((link) => (
+                <li key={link.id}>
+                  <a
+                    href={`#${link.id}`}
+                    className={cn(
+                      "hover:text-foreground block py-2 pr-2 transition-colors duration-300",
+                      // indentation
+                      link.level === "h3" ? "pl-8" : "pl-4",
 
-          <ul className="flex flex-col text-sm">
-            {links.map((link) => (
-              <li key={link.id}>
-                <a
-                  href={`#${link.id}`}
-                  className={cn(
-                    "hover:text-foreground block py-2 pr-2 transition-colors duration-300",
-                    // indentation
-                    link.level === "h3" ? "pl-8" : "pl-4",
-
-                    // active state text color
-                    link.id === activeId
-                      ? "text-primary font-medium"
-                      : "text-muted-foreground"
-                  )}
-                  onClick={(e) => {
-                    // lock observer immediately if clicked
-                    isClicking.current = true;
-                    setActiveId(link.id);
-                  }}
-                >
-                  {link.text}
-                </a>
-              </li>
-            ))}
-          </ul>
-        </nav>
+                      // active state text color
+                      link.id === activeId
+                        ? "text-primary font-medium"
+                        : "text-muted-foreground"
+                    )}
+                    onClick={(e) => {
+                      // lock observer immediately if clicked
+                      isClicking.current = true;
+                      setActiveId(link.id);
+                    }}
+                  >
+                    {link.text}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </nav>
+        </div>
       </div>
     </div>
   );

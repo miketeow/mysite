@@ -315,3 +315,15 @@ code > .diff.remove span {
   border-top-right-radius: 0;
   border-top: none;
 }
+
+@layer utilities {
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 4px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    @apply bg-muted-foreground/20 hover:bg-muted-foreground/40 rounded-full;
+  }
+}
