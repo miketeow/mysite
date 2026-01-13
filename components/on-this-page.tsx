@@ -36,35 +36,15 @@ export default function OnThisPage() {
 
       const headings = content.querySelectorAll("h2, h3");
       const generatedLinks: LinkType[] = [];
-      const usedIds = new Set<string>();
 
-      headings.forEach((heading, index) => {
-        let id = heading.id;
-        if (!id) {
-          const text = heading.textContent || "";
-          id = text
-            .toLowerCase()
-            .replace(/[^a-z0-9]+/g, "-")
-            .replace(/(^-|-$)+/g, "");
-          if (!id) id = `heading-${index}`;
+      headings.forEach((heading) => {
+        if (heading.id) {
+          generatedLinks.push({
+            id: heading.id,
+            text: heading.textContent || "",
+            level: heading.tagName.toLowerCase() as "h2" | "h3",
+          });
         }
-
-        let uniqueId = id;
-        let counter = 1;
-
-        while (usedIds.has(uniqueId)) {
-          uniqueId = `${id}-${counter}`;
-          counter++;
-        }
-
-        usedIds.add(uniqueId);
-        heading.id = uniqueId;
-
-        generatedLinks.push({
-          id: uniqueId,
-          text: heading.textContent || "",
-          level: heading.tagName.toLowerCase() as "h2" | "h3",
-        });
       });
 
       setLinks(generatedLinks);

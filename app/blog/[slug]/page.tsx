@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { Calendar, Hash, User } from "lucide-react";
 import { MDXRemote } from "next-mdx-remote/rsc";
 import rehypePrettyCode from "rehype-pretty-code";
+import rehypeSlug from "rehype-slug";
 
 import { SectionTitle } from "@/components/section-title";
 import { badgeVariants } from "@/components/ui/badge";
@@ -117,7 +118,11 @@ export default async function BlogPostPage({ params }: { params: Params }) {
           components={useMDXComponents()}
           options={{
             mdxOptions: {
-              rehypePlugins: [rehypeCopyLinked, [rehypePrettyCode, options]],
+              rehypePlugins: [
+                rehypeSlug,
+                rehypeCopyLinked,
+                [rehypePrettyCode, options],
+              ],
             },
           }}
         />

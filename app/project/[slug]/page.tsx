@@ -5,6 +5,7 @@ import { transformerNotationDiff } from "@shikijs/transformers";
 import { Calendar, Globe, Hash, Layers } from "lucide-react";
 import { MDXRemote } from "next-mdx-remote/rsc";
 import rehypePrettyCode from "rehype-pretty-code";
+import rehypeSlug from "rehype-slug";
 
 import OnThisPage from "@/components/on-this-page";
 import { SectionTitle } from "@/components/section-title";
@@ -169,6 +170,7 @@ export default async function ProjectPostPage({ params }: { params: Params }) {
               options={{
                 mdxOptions: {
                   rehypePlugins: [
+                    rehypeSlug,
                     rehypeCopyLinked,
                     [rehypePrettyCode, options],
                   ],
