@@ -32,7 +32,8 @@ export default function OnThisPage() {
   useEffect(() => {
     const extractHeadings = () => {
       const content = document.querySelector("article");
-      if (!content) return;
+      // if article isn't ready, try again in 100ms, retry is more simple
+      if (!content) return false;
 
       const headings = content.querySelectorAll("h2, h3");
       const generatedLinks: LinkType[] = [];
@@ -49,31 +50,42 @@ export default function OnThisPage() {
 
       setLinks(generatedLinks);
       // set first item active initially if exists
-      if (generatedLinks.length > 0) setActiveId(generatedLinks[0].id);
+      if (generatedLinks.length > 0 && !activeId) {
+        setActiveId(generatedLinks[0].id);
+      }
+      return true;
     };
 
-    extractHeadings();
+    // attempt to extract immediately, if fails, retry shortly
+    if (!extractHeadings()) {
+      const timer = setTimeout(extractHeadings, 150);
+      return () => clearTimeout(timer);
+    }
 
+    return;
+  }, []);
+
+  // Intesection Observer
+  useEffect(() => {
+    if (links.length === 0) return;
     // intersection observer to track scrolling
     const observer = new IntersectionObserver(
       (entries) => {
-        entries.forEach((entry) => {
-          // check if user is clicking, ignore observer
-          if (isClicking.current) return;
-          if (entry.isIntersecting) {
-            setActiveId(entry.target.id);
-          }
-        });
+        if (isClicking.current) return;
+        const visibleEntry = entries.find((e) => e.isIntersecting);
+        if (visibleEntry) {
+          setActiveId(visibleEntry.target.id);
+        }
       },
       { rootMargin: "0px 0px -80% 0px" }
     );
 
-    const headings = document.querySelectorAll("article h2, article h3");
-    headings.forEach((heading) => {
-      observer.observe(heading);
+    links.forEach((link) => {
+      const el = document.getElementById(link.id);
+      if (el) observer.observe(el);
     });
     return () => observer.disconnect();
-  }, []);
+  }, [links]);
 
   // global scroll listener
   useEffect(() => {
