@@ -21,6 +21,7 @@ export default function OnThisPage() {
     opacity: 0,
   });
   const navRef = useRef<HTMLElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   // lock to prevent observer from firing during click-scroll
   const isClicking = useRef(false);
@@ -119,7 +120,7 @@ export default function OnThisPage() {
   // whenever activeId changes, update marker position
 
   useEffect(() => {
-    if (!activeId || !navRef.current) return;
+    if (!activeId || !navRef.current || !scrollContainerRef.current) return;
 
     // find the link inside navigation
     const activeLink = navRef.current.querySelector(`a[href="#${activeId}"]`);
@@ -129,6 +130,19 @@ export default function OnThisPage() {
         top: activeLink.offsetTop,
         height: activeLink.offsetHeight,
         opacity: 1,
+      });
+      // scroll container manually
+      const container = scrollContainerRef.current;
+
+      // calculate scroll position to center the link
+      const scrollPosition =
+        activeLink.offsetTop -
+        container.clientHeight / 2 +
+        activeLink.clientHeight / 2;
+
+      container.scrollTo({
+        top: scrollPosition,
+        behavior: "smooth",
       });
     }
   }, [activeId, links]);
@@ -143,7 +157,10 @@ export default function OnThisPage() {
         </h4>
 
         {/* navigation container */}
-        <div className="custom-scrollbar max-h-[75vh] overflow-y-auto pr-4">
+        <div
+          className="custom-scrollbar max-h-[75vh] overflow-y-auto pr-4"
+          ref={scrollContainerRef}
+        >
           <nav className="relative" ref={navRef}>
             {/* the track - gray line on the left */}
             <div className="absolute top-0 left-0 h-full w-px bg-zinc-200 dark:bg-zinc-800" />
@@ -163,8 +180,9 @@ export default function OnThisPage() {
                 <li key={link.id}>
                   <a
                     href={`#${link.id}`}
+                    title={link.text}
                     className={cn(
-                      "hover:text-foreground block py-2 pr-2 transition-colors duration-300",
+                      "hover:text-foreground block truncate py-2 pr-2 transition-colors duration-300",
                       // indentation
                       link.level === "h3" ? "pl-8" : "pl-4",
 
