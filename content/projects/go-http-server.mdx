@@ -100,7 +100,7 @@ While they are functionally identical, the Go community almost exclusively prefe
 1.  **Consistency:** The `&T{}` syntax allows you to initialize fields immediately. `new(T)` only allows for zero-initialization, forcing you to use multiple lines to set up your struct.
 2.  **Visual Clarity:** The `&` symbol is a loud, clear signal that "this is a pointer." In a language where memory address vs. value matters, having that explicit symbol right at the moment of creation is preferred.
 
-**The Rule of Thumb:** Use `&T{}` for everything. Use `new(T)` only if you are feeling nostalgic or specifically want to emphasize that you are creating an empty, zero-initialized value.
+**The Rule of Thumb:** Use `&T{}` for everything. Use `new(T)` only if you want to emphasize that you are creating an empty, zero-initialized value.
 
 ### A Note on Memory: Escape Analysis
 
@@ -483,13 +483,217 @@ func main() {
 
 ```
 
+## Helper Functions
+
+Before proceeding to the main function, I needed to create some helper functions to keep the code DRY. Writing the same header setting and error handling logic in every handler is a recipe for messy code.
+
+```go title="main.go"
+type errorResponse struct {
+	Error string `json:"error"`
+}
+
+func respondWithError(w http.ResponseWriter, code int, msg string) {
+	respondWithJSON(w, code, errorResponse{Error: msg})
+}
+
+func respondWithJSON(w http.ResponseWriter, code int, payload any) {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("Error marshalling JSON: %s", err)
+		w.WriteHeader(500)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	w.Write(data)
+}
+```
+
+These two functions are the backbone of my API responses. The `respondWithJSON()` function ensures we always convert the payload to JSON and set the appropriate `Content-Type`. The `respondWithError()` wrapper enforces a standard error structure.
+
+Most frontends expect a specific JSON shape to parse data easily:
+
+```json
+{
+  "email": "test@example.com",
+  "password": "123"
+}
+```
+
+Frontend developers usually access properties via `data.email`. This implies two requirements: we return an **Object** rather than a primitive, and we use **camelCase** keys.
+
+To understand why `respondWithJSON` is written this way, I walked through a few failure scenarios.
+
+### The Raw String: A Type Error
+
+```go
+func handleTestString(w http.ResponseWriter, r *http.Request) {
+	respondWithJSON(w, 200, "This is just a raw string, not an object!")
+}
+```
+
+Technically, `json.Marshal` can handle a string. It produces a valid JSON string:
+
+```json
+"This is just a raw string, not an object!"
+```
+
+However, this usually breaks the frontend. If the client code expects an object—perhaps trying to access a property like `data.result`—receiving a primitive string causes a runtime error or undefined behavior. We need to send an object.
+
+### Structs without Tags: The Case Mismatch
+
+My next attempt was returning a struct without generic tags:
+
+```go
+// Returns a struct but WITHOUT json tags
+func handleTestNoTags(w http.ResponseWriter, r *http.Request) {
+	type User struct {
+		Email    string // Capitalized to mark as Exported
+		Password string
+	}
+	respondWithJSON(w, 200, User{
+		Email:    "test@example.com",
+		Password: "123",
+	})
+}
+```
+
+This returns a valid JSON object, but the keys match the Go struct fields exactly:
+
+```json
+{ "Email": "test@example.com", "Password": "123" }
+```
+
+In Go, struct fields *must* be capitalized to be exported and visible to other packages. However, frontends expect lowercase keys. If a JavaScript developer tries `user.email`, they get `undefined`. They would have to write `user.Email`, which violates standard JS conventions.
+
+### Lowercase Fields: The "Silent" Failure
+
+I thought I would just make the Go struct fields lowercase to match the JSON requirement.
+
+```go
+// Returns a struct with lowercase fields
+func handleTestPrivate(w http.ResponseWriter, r *http.Request) {
+	type userPrivate struct {
+		email    string // Lowercase makes this Unexported and Private
+		password string
+	}
+	respondWithJSON(w, 200, userPrivate{
+		email:    "test@example.com",
+		password: "123",
+	})
+}
+```
+
+This results in an empty object `{}`.
+
+The failure happens because `json.Marshal` comes from the `encoding/json` package. Since `email` and `password` start with lowercase letters, they are **private** to my package. The external JSON package cannot "see" them via reflection, so it simply ignores them.
+
+### The Solution: Struct Tags
+
+The only way to satisfy both Go's export rules and JSON's naming conventions is using struct tags:
+
+```go
+func handleUser(w http.ResponseWriter, r *http.Request) {
+	type User struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	respondWithJSON(w, 200, User{
+		Email:    "test@example.com",
+		Password: "123",
+	})
+}
+```
+
+Now, Go sees the exported `Email` field, but the JSON encoder uses the tag value `email` for the output.
+
+```json
+{
+  "email": "test@example.com",
+  "password": "123"
+}
+```
+
+### The "Implicit 200" Trap
+
+There is one more subtle bug to watch out for. If you forget to set the header or status code explicitly, Go makes assumptions.
+
+```go
+func respondWithJSON(w http.ResponseWriter, code int, payload any) {
+	data, err := json.Marshal(payload)
+	// ... error handling ...
+
+    // MISTAKE: Forgot to write header or status code!
+	// w.Header().Set("Content-Type", "application/json")
+	// w.WriteHeader(code)
+
+	w.Write(data)
+}
+```
+
+Go fails safe here, but in a dangerous way. If you write data without setting a status code, Go implicitly assumes `200 OK` and tries to guess the content type.
+
+If you are trying to send an error—such as `{ "error": "Unauthorized" }`—but forget the status code, the frontend receives a **200 OK**. A client checking `response.ok` will think the request succeeded, even though the body contains an error message. Explicitly setting `w.WriteHeader(code)` is mandatory for correct error handling.
+
+<DeepDive title="What exactly is `any`?">
+
+In the `respondWithJSON` function, you might notice the payload type is `any`.
+
+```go
+func respondWithJSON(w http.ResponseWriter, code int, payload any) { ... }
+```
+
+If you are coming from TypeScript, you might think this works like TS `any`—a way to disable type checking. In Go, it is slightly different.
+
+Prior to Go 1.18, we didn't have the keyword `any`. We had to write `interface{}`.
+**`any` is strictly an alias for `interface{}`.** It is syntactic sugar to save us from typing those brackets every time.
+
+**Why an "Empty Interface"?**
+In Go, interfaces define requirements.
+* An interface with a `Read()` method requires a type to have a reader.
+* An empty interface `interface{}` requires **zero methods**.
+
+Since every single type in Go (string, bool, struct, int) satisfies the requirement of having "at least zero methods," an empty interface can hold **anything**.
+
+**The "Box" Analogy**
+Think of `any` as a sealed cardboard box.
+* **TypeScript `any`:** The compiler lets you reach through the cardboard and grab the object inside blindly.
+* **Go `any`:** The compiler only sees the box. You can pass the box around like we do to `json.Marshal`, but if you want to modify the data inside, you must explicitly "open" it using Type Assertion.
+* **TypeScript `unknown`:** So Go `any` type is actually much closer to TypeScript `unknown` as it forces user to assert what type it is before user uses it.
+
+For our JSON helper, `any` is perfect. We don't need to modify the data; we just need to pass the "box" to the JSON library, which inspects the contents at runtime to generate the response.
+
+</DeepDive>
+
+### Hash Functions
+
+Create a file <File>internal/auth/auth.go</File> and create the hash function :
+
+```go title="auth.go"
+package auth
+
+import (
+	"github.com/alexedwards/argon2id"
+)
+
+func HashPassword(password string) (string, error) {
+	return argon2id.CreateHash(password, argon2id.DefaultParams)
+}
+
+func CheckPasswordHash(password, hash string) (bool, error) {
+	return argon2id.ComparePasswordAndHash(password, hash)
+}
+```
+
+The first function is to hash the password, the second function is to check if the password is correct. Argon2Id is the latest industry standard, it is even better than Bcrypt.
+
 ## The User Handler: Parsing and Creating
 
 Now that `sqlc` has generated our type-safe database functions, we can wire them up in <File>main.go</File>.
 
 ### Parsing JSON
 
-Since we are building an HTTP server, we deal with streaming data. To read the request body, we use a `json.Decoder`. Unlike `json.Unmarshal` (which requires loading the whole JSON into memory first), the decoder processes the stream directly from the request body, which is more efficient for an HTTP server.
+Since we are building an HTTP server, we deal with streaming data. To read the request body, we use a `json.NewDecoder`which is to attach a JSON processing machine to the request body. Unlike `json.Unmarshal` (which requires loading the whole JSON into memory first), the decoder processes the stream directly from the request body, which is more efficient for an HTTP server.
 
 We define a struct to match the expected JSON structure. (Note: You can define this struct inside the handler function to keep the global namespace clean).
 
@@ -512,6 +716,12 @@ func (cfg *apiConfig) handleUsersCreate(w http.ResponseWriter, r *http.Request) 
     // ... continued below
 }
 ```
+
+In the line `decode.Decode(&params)`:
+- **Scanning**: It reads the JSON key - "email" from the stream.
+- **Matching**: It looks at the parameter struct, search for the field that has struct tag `json:"email"`
+- **Type Checking** : It checks if the value in the JSON matched the type in the parameter struct, check if it is truly a string type
+- **Assignment**: It reaches into the memory address provided `&params`, and write the value directly there. Which is why later in the function you can access it through `params.email`
 
 ### Context: The "Kill Switch"
 
@@ -596,3 +806,51 @@ func (cfg *apiConfig) handleUsersCreate(w http.ResponseWriter, r *http.Request) 
     })
 }
 ```
+
+### Create User
+
+After understanding all these different concept, this `handleUser()` would be relatively simple to understand.
+
+```go title="main.go"
+func (cfg *apiConfig) handleUser(w http.ResponseWriter, r *http.Request) {
+	type parameter struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+
+	decoder := json.NewDecoder(r.Body)
+	params := parameter{}
+	err := decoder.Decode(&params)
+	if err != nil {
+		respondWithError(w, 400, "Something went wrong")
+		return
+	}
+
+	hashedPassword, err := auth.HashPassword(params.Password)
+	if err != nil {
+		respondWithError(w, 500, "Couldn't hash password")
+		return
+	}
+	user, err := cfg.query.CreateUser(r.Context(), database.CreateUserParams{
+    ID:             uuid.New(),      // Must generate UUID
+    CreatedAt:      time.Now().UTC(), // Must generate timestamp
+    UpdatedAt:      time.Now().UTC(),
+		Email:          params.Email,
+		HashedPassword: hashedPassword,
+	})
+	if err != nil {
+		log.Printf("Error creating user: %v", err)
+		respondWithError(w, 500, "Something went wrong when creating user")
+		return
+	} else {
+		respondWithJSON(w, 201, User{
+      ID: user.ID,
+      CreatedAt: user.CreatedAt,
+      UpdatedAt: user.UpdatedAt,
+      Email: user.Email,
+      IsChirpyRed: user.IsChirpyRed})
+	}
+}
+```
+
+## JWT

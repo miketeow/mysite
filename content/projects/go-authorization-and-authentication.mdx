@@ -1,0 +1,416 @@
+---
+title: "Go Authorization and Authentication"
+publishedAt: "2026-01-15"
+description: "The evolution of an auth system: Moving from naive LocalStorage to a robust hybrid architecture using JWTs and Refresh Tokens in Go."
+tags: ["Go","server","JWT","security","architecture"]
+repositoryUrl: "https://github.com/miketeow/httpserver"
+techStack: ["Go"]
+---
+
+# Introduction
+
+This post documents my journey learning JSON Web Tokens (JWTs). It focuses on reasoning through the "why" and working out the implementation details within a Go HTTP server.
+
+## The Naive Implementation: LocalStorage
+
+It all starts with the need to maintain state. We need the server to remember that a user has logged in, but HTTP is a stateless protocol.
+
+My first instinct involved storing the credentials—or a returned token—directly in the browser's local storage. The logic seemed sound: let every subsequent request retrieve the token from local storage and attach it to the request header. This way, the server can verify the user's identity on every hit.
+
+But this quickly leads to a dangerous vulnerability known as **Cross-Site Scripting or XSS**.
+
+In the era of vanilla HTML and JavaScript, the main danger lay in the frontend code. If the application blindly trusts user input, a malicious actor can inject scripts.
+
+```js
+function login() {
+  fetch("/login", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+  })
+    .then((res) => res.json())
+    .then((data) => {
+      // The dangerous step: making the token accessible to JS
+      localStorage.setItem("auth_token", data.token);
+      console.log("Token stored:", data.token);
+  });
+}
+```
+Any input box on the website becomes a potential attack vector. A malicious actor can try to inject a script tag like `<script>alert("HACKED: " + localStorage.getItem("auth_token"))</script>`. Without proper input sanitization, the browser executes this, and the token is stolen.
+
+Modern frameworks like React reduce this specific risk significantly. By design, React escapes content and renders it as pure text rather than executable code, effectively neutralizing simple `<script>` tag injections. Additionally, we have robust sanitization libraries built and audited by security experts to scrub inputs before they render.
+
+**So, is LocalStorage safe now?**
+
+No. Even with these safety features, storing auth tokens in local storage remains a bad idea. You might ensure every input in *your* code is sanitized, but modern web development relies heavily on third-party libraries.
+
+This exposes the application to supply-chain attacks. If a malicious actor updates a dependency you use—or finds a way to compromise a library—they can intentionally leave an unsanitized input or execute code directly. Since `window.localStorage` is globally accessible to any JavaScript running on your page, a compromised library can silently exfiltrate your tokens.
+
+## Server-Side Authentication: The Cookie Pivot
+
+To mitigate the XSS vulnerability inherent in LocalStorage, I moved to a standard and time-tested approach called **Server-Side Sessions**.
+
+Instead of trusting the client to hold the data, the server takes control. We create a separate `sessions` table in the database to store a `session_id`, the associated `user_id`, and an `expires_at` timestamp.
+
+When a user logs in, the server generates a random `session_id`—a string with no inherent user data—and sends it to the browser via the `Set-Cookie` header. The browser automatically attaches this cookie to all future requests to the same domain.
+
+This immediately solves the "password in every request" problem. We only send the raw credentials once, and subsequent requests rely on the cookie to prove identity within the expiry window.
+
+### Locking Down the Cookie
+
+Moving to cookies allows us to use two critical security flags that LocalStorage lacks:
+
+1.  **`HttpOnly`:** This flag tells the browser that the cookie **cannot be accessed by JavaScript**. While a user can still see it in the Developer Tools, a malicious script—like the XSS attack discussed earlier—cannot read `document.cookie`. This effectively neutralizes the token theft vector.
+2.  **`Secure`:** This flag ensures the cookie is *only* transmitted over encrypted HTTPS connections. If a user accidentally types `http://` or a malicious actor tries to downgrade the connection via a Man-in-the-Middle attack, the browser will **refuse to send the cookie**. The server will receive the request, see no cookie, and return `401 Unauthorized`.
+
+### The Storage Dilemma: Database vs. Memory
+
+Now that the transport is secure, we have to decide **where** to store these sessions on the server. This leads to an evolutionary series of bottlenecks.
+
+#### Attempt 1: The Database — The Performance Bottleneck
+
+The most obvious place is the existing Postgres database.
+* **The Flow:** Every single request triggers a database lookup to validate the `session_id`.
+* **The Problem:** This creates a **1 + 1 query pattern**. We are hammering the database just to say "Yes, you are logged in." As traffic spikes, the database connections become the bottleneck, slowing down the entire app.
+
+#### Attempt 2: Local Server Memory — The Scaling Trap
+
+To fix the slow database, we might try storing sessions in the Go application's memory using a global `map[string]Session` variable.
+* **The Pro:** It is instant. No database network calls.
+* **The Trap:** This introduces **Sticky Sessions**.
+
+Imagine we scale up to use a Load Balancer with **Server A** and **Server B**.
+1.  User logs in on **Server A**. The session is stored in Server A's RAM.
+2.  The next request gets routed by the Load Balancer to **Server B**.
+3.  **Server B** checks its own RAM, finds no session, and kicks the user out.
+
+To make this work, we would have to configure the Load Balancer to force Sticky Sessions which ensures a specific user *always* hits Server A. This is fragile. If Server A crashes or gets overloaded, all those users lose their sessions instantly.
+
+### The Solution: Enter Redis — Centralized Memory
+
+We need the speed of **Attempt 2** (RAM) but the shared access of **Attempt 1** (Database). This is where **Redis** comes in.
+
+Redis acts as a centralized, in-memory data store sitting between your servers and your database.
+* **Speed:** It is orders of magnitude faster to check a session ID in Redis than to query Postgres on disk.
+* **Scalability:** Both Server A and Server B connect to the *same* Redis instance. No Sticky Sessions required.
+
+However, even Redis has trade-offs. RAM is significantly more expensive per GB than disk storage, and storing millions of sessions adds up. Furthermore, Redis requires constant power; a crash could wipe active sessions and force a global logout.
+
+## The Shift to JSON Web Tokens (JWT)
+
+The practice of using session IDs remained the gold standard during the era of desktop web browsing and server-rendered applications. However, with the rise of the mobile internet, session-based authentication hit a friction point.
+
+While mobile browsers handle cookies just fine, native iOS and Android networking libraries do not manage them by default. Maintaining a "Cookie Jar" in a native mobile app is significantly more complex than on the web. As development shifted toward multi-platform support covering Web, iOS, and Android, we needed a more universal standard.
+
+Furthermore, modern apps are often distributed across different domains—such as <Url>api.server.com</Url> versus <Url>app.client.com</Url>—and cookies famously struggle to cross domain boundaries.
+
+### The CSRF Trap
+
+While cookies started as a convenience where the browser automatically attaches headers to requests, this "auto-send" behavior enables a dangerous exploit known as **Cross-Site Request Forgery** or **CSRF**.
+
+Imagine a malicious actor sends you a phishing email leading to a fake page. Hidden scripts on this page can force your browser to send a request to your *actual* bank server, like a `POST /transfer` call.
+* Your browser doesn't know the request originated from a fake page.
+* Because you logged into your bank yesterday, your browser dutifully attaches your valid session cookie to this request.
+* The bank receives the request, sees the valid cookie, and executes the transfer.
+
+To counter this, developers must implement an "Anti-CSRF Token"—a secondary secret that the frontend must manually include in headers. This patches the hole, but it means managing yet another secret. To avoid this operational nightmare and streamline the developer experience, many applications adopted JWTs.
+
+## The Security Layers of JWT
+
+Implementing JWTs relies on a multi-layered security mechanism. It is not just about signing a token; it requires securing the entire pipeline.
+
+### Layer 1: The Network — Transport Security
+
+The first line of defense is HTTPS. In modern development, this is non-negotiable. HTTPS encrypts the traffic between the client and the server so a "Man-in-the-Middle" cannot sniff the token off the wire. If a hacker intercepts the request, they only see gibberish.
+
+### Layer 2: Storage — Client-Side Security
+
+If the hacker cannot intercept the token during transport, they might try to steal it while it sits in the client's browser. At this point, HTTPS cannot help us. Developers face a choice between two storage mechanisms, each with a specific trade-off.
+
+**Option A: JWT in LocalStorage**
+Most modern Single Page Applications use this approach. It aligns with the original intent of JWTs: strictly explicit authorization headers which avoid the complexity of cookies and cross-origin domains.
+* **The Risk:** As discussed earlier, LocalStorage is globally accessible to JavaScript. It is highly susceptible to XSS attacks. If you choose this route, you must rigorously sanitize all inputs.
+
+**Option B: JWT in HttpOnly Cookies**
+This effectively treats the JWT like a traditional session ID.
+* **The Trade-off:** This provides top-tier security against XSS because JavaScript cannot read the token. However, it reintroduces the CSRF vulnerability and the complexity of managing cookies across domains. Banks often prefer this implementation because they prioritize the extra security layer over developer convenience.
+
+### Layer 3: Integrity — The Signature
+
+The first two layers prevent a **Thief** who steals your token. The third layer prevents a **Liar** who is a legitimate user trying to forge data.
+
+A JWT is structured as `Header.Payload.Signature`.
+* **Visibility:** The Header and Payload are Base64 encoded, not encrypted. Anyone can copy a token into <Url>jwt.io</Url> and read the contents like the User ID.
+* **Integrity:** The Signature is the guardrail.
+
+A user might be legitimate, but we cannot trust them not to escalate their privileges. If a user manually changes their `user_id` in the Payload to try and become an Admin, the signature verification on the server will fail. The server knows the token was tampered with because the user does not possess the server's private secret key required to re-sign the token.
+
+## Practical Implementation in Go
+
+To start implementing JWT in Go, we first define a secret key. A robust way to generate this is via the command line:
+
+```bash
+openssl rand -base64 32
+```
+This generates a random 32-byte key in Base64 encoding. This secret must be stored securely in our <File>.env</File> file rather than hardcoded in the source.
+
+When generating the token, we adhere to standard claims to ensure interoperability across languages and frameworks:
+1.  **Issuer or `iss`:** Who created the token.
+2.  **IssuedAt or `iat`:** When it was created.
+3.  **ExpiresAt or `exp`:** When it stops working.
+4.  **Subject or `sub`:** Usually the User ID.
+
+The server combines these claims with the secret to generate the final `Header.Payload.Signature` string.
+
+### The "Bearer" Token Standard
+
+The use of the `Bearer` prefix is a widely accepted industry standard. Technically we could use any word—even `MagicKey`—but using `Bearer` ensures our API is compatible with standard HTTP clients like Postman or cURL. The term comes from the financial world: unlike a credit card which is identity-based, a "Bearer bond" implies that **possession equals ownership**. You do not have to prove your identity, you simply hold the bond. This fits the description of a JWT perfectly.
+
+The frontend code manually passes the JWT into the Authorization Header:
+
+```js
+async function fetchPrivateData(){
+  const myToken = localStorage.getItem("jwt_token");
+
+  const response = await fetch("http://api.yoursite.com/post",{
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${myToken}`
+    },
+    body: JSON.stringify({body: "Hello World"})
+  })
+}
+
+```
+
+The Go function to retrieve this token is simple. We just need to split the string to remove the prefix.
+
+```go title="auth.go"
+func GetBearerToken(headers http.Header) (string, error){
+	authHeader := headers.Get("Authorization")
+	if authHeader == ""{
+		return "",fmt.Errorf("no authorization header found")
+	}
+
+	// split header by whitespace
+	// expect ["Bearer", "TOKEN_STRING"]
+	parts := strings.Split(authHeader, " ")
+	if len(parts) != 2 || parts[0] != "Bearer"{
+		return "",fmt.Errorf("malformed authorization header")
+	}
+
+	return parts[1],nil
+}
+```
+
+### Signing and Validating
+
+```go title="auth.go"
+func MakeJWT(userID uuid.UUID, tokenSecret string, expiresIn time.Duration) (string, error) {
+	signingKey := []byte(tokenSecret)
+	claims := jwt.RegisteredClaims{
+		Issuer:    "sample",
+		IssuedAt:  jwt.NewNumericDate(time.Now().UTC()),
+		ExpiresAt: jwt.NewNumericDate(time.Now().UTC().Add(expiresIn)),
+		Subject:   userID.String(),
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+
+	return token.SignedString(signingKey)
+}
+```
+
+First we pass the value into the claims, generate the final JWT with the HS256 algorithm, and sign the token with our private secret key.
+
+```go title="auth.go"
+func ValidateJWT(tokenString, tokenSecret string) (uuid.UUID, error) {
+	claimedStruct := jwt.RegisteredClaims{}
+
+	token, err := jwt.ParseWithClaims(tokenString, &claimedStruct, func(t *jwt.Token) (any, error) {
+    if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+      return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+    }
+		return []byte(tokenSecret), nil
+	})
+	if err != nil {
+		return uuid.Nil, err
+	}
+
+	userIDString, err := token.Claims.GetSubject()
+	if err != nil {
+		return uuid.Nil, err
+	}
+
+	userID, err := uuid.Parse(userIDString)
+	if err != nil {
+		return uuid.Nil, err
+	}
+
+	return userID, nil
+}
+```
+
+For the validation function, we strictly check the algorithm method. One possible exploit involves a malicious actor passing a fake token with the header `{algo: "None"}`. If we do not check for the signing method, our validation function might see this fake "None" algorithm, skip the signature check entirely, and let the fake token pass.
+
+Here is the pseudocode of what `ParseWithClaims` does, and why the check is vital:
+
+```go
+// pseudocode
+
+func ParseWithClaims(tokenString, claims, keyFunc){
+  // 1. split the token
+  // attacker send "Header(alg:none) . Payload(admin). (EmptyString)"
+  parts := string.Split(tokenString,".")
+  header64 := parts[0]
+  payload64 := parts[1]
+  signature := parts[2]
+
+  // 2. read the header
+  header := decode(header64) // found {"alg": "none"}
+
+  // 3. fill the claims struct
+  // "User" : "Admin"
+  json.Unmarshal(decode(payload64), &claims)
+
+  // 4. get the secret key
+  key := keyFunc(header)
+  // simply return the key if there is no checking condition for signing method
+
+  if header.alg == "HS256" {
+    //... run the math (HMAC)
+  } else if header.alg == "none" {
+    // no math operation
+    // logic for "none": if signature is empty, the token is valid
+
+    if signature == ""{
+      return validToken // attack success, hacker is now admin
+    }
+  }
+
+  return error("Invalid Token")
+}
+```
+
+## The Expiration Paradox
+
+With the JWT system now working, we face a difficult architecture decision regarding how long the token should live.
+
+The `ExpiresAt` configuration forces us to choose between **security** and **user experience**.
+
+**1. The User-Friendly Seven-Day Token**
+The user can stay logged in for a full week. The problem is that if a hacker steals the token via XSS or public WIFI sniffing, they effectively have access for that entire week. The stateless JWT remains valid until it expires. There is no easy way for a server to recall a distributed token.
+
+**2. The Secured Fifteen-Minute Token**
+To fix the security flaw, we can reduce the window of vulnerability. Even if the token is stolen, it becomes useless after 15 minutes. Unfortunately, this forces the user to log in four times an hour which creates a terrible user experience.
+
+To solve this, backend engineers looked at the OAuth 2.0 specification and adopted a hybrid approach using two tokens.
+
+## The Hybrid Approach
+
+In this approach, we separate the concerns into **authentication** or who you are, and **authorization** or what you can do.
+
+When a user logs in, the client receives two different tokens.
+
+1.  **Access Token:** This is a short-lived JWT, typically lasting one hour. It is used to fetch data and prove authorization.
+2.  **Refresh Token:** This is a long-lived opaque string, often valid for 60 days. It is stored in the database and proves identity.
+
+In normal usage, the client browser uses the Access Token to make requests. The flow is highly efficient as the server validates the signature instantly using only the CPU. This avoids database hits for 99% of requests.
+
+Eventually, the Access Token expires and the server returns a `401 Unauthorized` status. The client then sends the Refresh Token to a specific endpoint like <Url>/api/refresh</Url>. The server checks the database to see if the refresh token is valid and not revoked. If the token is valid, the server issues a brand new Access Token.
+
+This architecture gives us the performance of stateless JWTs while retaining the control of stateful sessions. Since the Refresh Token is checked against the database, we can revoke it instantly if we detect suspicious activity. This effectively locks the user out once their short-lived Access Token expires.
+
+### Code Implementation
+
+We have already shown the code for creating and validating the Access Token. Here is a simple function to generate the random Refresh Token.
+
+```go title="auth.go"
+func MakeRefreshToken()(string,error){
+	data := make([]byte,32)
+	_,err := rand.Read(data)
+	if err != nil {
+		return "",err
+	}
+	return hex.EncodeToString(data),nil
+}
+```
+
+We use this to create a token during the `handleLogin` endpoint and store it in the database.
+
+```go title="main.go"
+func (cfg *apiConfig) handleLogin(w http.ResponseWriter, r *http.Request) {
+  // .. other code
+  refreshTokenStr, err := auth.MakeRefreshToken()
+  if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't create refresh token")
+		return
+	}
+  // create the token
+  _, err = cfg.query.CreateRefreshToken(r.Context(), database.CreateRefreshTokenParams{
+		Token:     refreshTokenStr,
+		UserID:    user.ID,
+		ExpiresAt: time.Now().Add(time.Hour * 24 * 60), // 60 Days
+	})
+}
+
+```
+
+Finally, we need endpoints to renew the Access Token or revoke the Refresh Token.
+
+```go title="auth.go"
+func (cfg *apiConfig) handleRefresh(w http.ResponseWriter, r *http.Request) {
+	refreshToken, err := auth.GetBearerToken(r.Header)
+
+	user, err := cfg.query.GetUserFromRefreshToken(r.Context(), database.GetUserFromRefreshTokenParams{
+		Token:     refreshToken,
+		ExpiresAt: time.Now().UTC(),
+	})
+
+	accessToken, err := auth.MakeJWT(user.ID, cfg.jwtSecret, time.Hour)
+
+	respondWithJSON(w, http.StatusOK, struct {
+		Token string `json:"token"`
+	}{
+		Token: accessToken,
+	})
+}
+
+func (cfg *apiConfig) handleRevoke(w http.ResponseWriter, r *http.Request) {
+	refreshToken, err := auth.GetBearerToken(r.Header)
+
+	err = cfg.query.RevokeRefreshToken(r.Context(), database.RevokeRefreshTokenParams{
+		Token: refreshToken,
+		RevokedAt: sql.NullTime{
+			Time:  time.Now().UTC(),
+			Valid: true,
+		},
+	})
+	w.WriteHeader(http.StatusNoContent)
+}
+```
+These endpoints call the functions generated by `sqlc` based on the queries in <File>tokens.sql</File>.
+
+```sql title="tokens.sql"
+-- name: GetUserFromRefreshToken :one
+SELECT users.* FROM users
+JOIN refresh_tokens ON users.id = refresh_tokens.user_id
+WHERE refresh_tokens.token = $1
+AND refresh_tokens.expires_at > $2
+AND refresh_tokens.revoked_at IS NULL;
+
+-- name: RevokeRefreshToken :exec
+UPDATE refresh_tokens
+SET revoked_at = $2, updated_at = $2
+WHERE token = $1;
+```
+
+## A Critical Note on Storage and Security
+
+Throughout this guide, we stored tokens in `LocalStorage` for simplicity. While this is a standard pattern for many Single Page Applications, high-security contexts like banking often prefer storing tokens in `HttpOnly` cookies to mitigate XSS attacks.
+
+However, switching to cookies introduces a new set of challenges. It requires strict CORS configuration and robust protection against Cross-Site Request Forgery or CSRF. This often demands a complex "Double Submit Cookie" pattern or dedicated middleware to handle the anti-CSRF tokens.
+
+We intentionally focused on the token lifecycle here. Mastering the interaction between Access and Refresh tokens is the prerequisite before tackling the transport security layer. Once you are comfortable with this logic, the move to `HttpOnly` cookies is just a change in the transport mechanism rather than a rewrite of your authentication architecture.
