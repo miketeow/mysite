@@ -291,7 +291,6 @@ The idiomatic Go solution is to bundle everything related to your app’s state 
 type apiConfig struct {
     fileserverHits atomic.Int32
     query      *database.Queries
-    platform       string
 }
 
 // This method is "bound" to our config struct
@@ -699,7 +698,7 @@ We define a struct to match the expected JSON structure. (Note: You can define t
 
 ```go title="main.go"
 
-func (cfg *apiConfig) handleUsersCreate(w http.ResponseWriter, r *http.Request) {
+func (cfg *apiConfig) handleUser(w http.ResponseWriter, r *http.Request) {
 	type parameters struct {
 		Email    string `json:"email"`
 		Password string `json:"password"`
@@ -789,7 +788,7 @@ We would always rather fix a bug at compile time than have it crash in productio
 
 ```go title="main.go"
 // Define a clean response struct
-type UserResponse struct {
+type User struct {
 	ID        uuid.UUID `json:"id"`
 	Email     string    `json:"email"`
 	CreatedAt time.Time `json:"created_at"`
@@ -799,7 +798,7 @@ type UserResponse struct {
 func (cfg *apiConfig) handleUsersCreate(w http.ResponseWriter, r *http.Request) {
     // ... create user logic ...
 
-    respondWithJSON(w, http.StatusCreated, UserResponse{
+    respondWithJSON(w, http.StatusCreated, User{
         ID:        user.ID,
         Email:     user.Email,
         CreatedAt: user.CreatedAt,
@@ -848,9 +847,325 @@ func (cfg *apiConfig) handleUser(w http.ResponseWriter, r *http.Request) {
       CreatedAt: user.CreatedAt,
       UpdatedAt: user.UpdatedAt,
       Email: user.Email,
-      IsChirpyRed: user.IsChirpyRed})
+      })
 	}
 }
 ```
 
-## JWT
+## Authentication with JWTs
+
+Now that we can create users, we need a way to log them in.
+
+In the past, servers used sessions stored in the database to track logged-in users. However, for this project, we are building a stateless API. This means the server will not remember who is logged in between requests. Instead, the client must present a digital "badge" with every request to prove their identity.
+
+This badge is a **JSON Web Token** or **JWT**.
+
+We need to update the `apiConfig` struct by creating a jwtSecret field, so that it can hold the JWTs secret key.
+
+```go title="main.go"
+type apiConfig struct {
+	fileserverHits atomic.Int32
+	query          *database.Queries
+	jwtSecret      string // <--- Add this
+}
+
+func main() {
+    // ...
+    jwtSecret := os.Getenv("JWT_SECRET")
+    if jwtSecret == "" {
+        log.Fatal("JWT_SECRET environment variable is not set")
+    }
+
+	apiCfg := &apiConfig{
+		fileserverHits: atomic.Int32{},
+		query:          dbQueries,
+		jwtSecret:      jwtSecret, // <--- Add this
+	}
+    // ...
+}
+```
+
+### The Auth Deep Dive
+
+Implementing robust authentication involves handling cryptography, expiration times, and refresh tokens. It is a complex topic that deserves its own space to explore properly.
+
+I have written a complete deep dive on the architecture of this system here: [Go Authorization and Authentication](/project/go-authorization-and-authentication).
+
+I highly recommend reading that post to understand the security reasoning behind Refresh Tokens and the "Why" of our architecture. For this server build, we will focus strictly on wiring up the `handleLogin` endpoint using the `auth` package we designed in that post.
+
+### Wiring the Login Handler
+
+The login handler is responsible for three specific tasks:
+1.  **Verification:** Check if the provided password matches the stored hash.
+2.  **Generation:** Create the Access and Refresh tokens.
+3.  **Response:** Return the tokens along with the non-sensitive user profile.
+
+Before writing the Go implementation, we must prepare the database. We need a table to store the long-lived refresh tokens.
+
+```sql title="004_refresh_tokens.sql"
+-- +goose Up
+CREATE TABLE refresh_tokens (
+    token TEXT PRIMARY KEY,
+    created_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    expires_at TIMESTAMP NOT NULL,
+    revoked_at TIMESTAMP
+);
+
+-- +goose Down
+DROP TABLE refresh_tokens;
+```
+We also need to define the queries for `sqlc` to generate our type-safe Go interface. We need three specific operations: creating a token, retrieving a user by their token, and revoking a token.
+
+```sql title="tokens.sql"
+-- name: CreateRefreshToken :one
+INSERT INTO refresh_tokens (token, created_at, updated_at, user_id, expires_at, revoked_at)
+VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    NULL
+)
+RETURNING *;
+
+-- name: GetUserFromRefreshToken :one
+SELECT users.* FROM users
+JOIN refresh_tokens ON users.id = refresh_tokens.user_id
+WHERE refresh_tokens.token = $1
+AND refresh_tokens.expires_at > $2
+AND refresh_tokens.revoked_at IS NULL;
+
+-- name: RevokeRefreshToken :exec
+UPDATE refresh_tokens
+SET revoked_at = $2, updated_at = $2
+WHERE token = $1;
+```
+
+After saving these files, run `sqlc generate` in your terminal. This will update the `internal/database` package with the new struct definitions and methods.
+
+Now we can implement the `handleLogin` endpoint.
+
+You will notice a small block of logic handling `ExpiresInSeconds`. This allows clients to request a very short token duration (capped at 1 hour). This is primarily useful for automated testing, allowing us to verify token expiration without waiting a full hour.
+
+```go title="handle_login.go"
+func (cfg *apiConfig) handleLogin(w http.ResponseWriter, r *http.Request) {
+	type parameter struct {
+		Email            string `json:"email"`
+		Password         string `json:"password"`
+		ExpiresInSeconds int    `json:"expires_in_seconds"`
+	}
+
+	decoder := json.NewDecoder(r.Body)
+	params := parameter{}
+	err := decoder.Decode(&params)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't decode parameters")
+		return
+	}
+
+	user, err := cfg.query.GetUserByEmail(r.Context(), params.Email)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "Incorrect email or password")
+		return
+	}
+
+	err = auth.CheckPasswordHash(params.Password, user.HashedPassword)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "Incorrect email or password")
+		return
+	}
+
+    // Default to 1 hour, unless a shorter time is requested for testing
+	expirationTime := time.Hour
+	if params.ExpiresInSeconds > 0 && time.Duration(params.ExpiresInSeconds)*time.Second < expirationTime {
+		expirationTime = time.Duration(params.ExpiresInSeconds) * time.Second
+	}
+
+	accessToken, err := auth.MakeJWT(user.ID, cfg.jwtSecret, expirationTime)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't create access token")
+		return
+	}
+
+	refreshTokenStr, err := auth.MakeRefreshToken()
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't create refresh token")
+		return
+	}
+
+  now := time.Now().UTC()
+
+	_, err = cfg.query.CreateRefreshToken(r.Context(), database.CreateRefreshTokenParams{
+		Token:     refreshTokenStr,
+		UserID:    user.ID,
+		CreatedAt: now,
+		UpdatedAt: now,
+		ExpiresAt: time.Now().Add(time.Hour * 24 * 60), // 60 Days
+	})
+
+    // Embed the User DTO into the response
+	type response struct {
+		User
+		Token        string `json:"token"`
+		RefreshToken string `json:"refresh_token"`
+	}
+
+	respondWithJSON(w, http.StatusOK, response{
+		User: User{
+			ID:          user.ID,
+			CreatedAt:   user.CreatedAt,
+			UpdatedAt:   user.UpdatedAt,
+			Email:       user.Email,
+		},
+		Token:        accessToken,
+		RefreshToken: refreshTokenStr,
+	})
+}
+```
+
+By embedding the `User` struct inside our response, we automatically flatten the JSON. The client receives a clean object containing the user details alongside the two tokens needed for future requests.
+
+## Closing the loop: Authorization vs. Authentication
+
+We have spent a lot of time on **Authentication** — verifying the user's identity via JWTs. But identity is only half the battle. We also need **Authorization** — verifying that this user has permission to perform a specific action.
+
+The most common mistake in backend development is assuming that a valid JWT means "Admin Access".
+
+### The Ownership Check
+
+We need a resource to manage. While most social media platforms have "posts," in this project we call them "Chirps." We start by defining the schema for this new item.
+
+```sql title="002_chirps.sql"
+-- +goose Up
+CREATE TABLE chirps (
+  id UUID PRIMARY KEY,
+  created_at TIMESTAMP NOT NULL,
+  updated_at TIMESTAMP NOT NULL,
+  body TEXT NOT NULL,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- +goose Down
+DROP TABLE chirps
+```
+
+Just like with users and tokens, we write queries to handle these items so `sqlc` can generate our type-safe Go functions.
+
+```sql title="chirps.sql"
+-- name: CreateChirp :one
+INSERT INTO chirps(id, created_at, updated_at, body, user_id)
+VALUES (
+  gen_random_uuid(),
+  NOW(),
+  NOW(),
+  $1,
+  $2
+)
+RETURNING *;
+
+-- name: GetChirps :many
+SELECT * FROM chirps
+ORDER BY created_at ASC;
+
+-- name: GetChirp :one
+SELECT * FROM chirps
+WHERE id = $1;
+
+-- name: DeleteChirp :exec
+DELETE FROM chirps
+WHERE id = $1 AND user_id = $2;
+
+-- name: GetChirpsForAuthor :many
+SELECT * FROM chirps
+WHERE user_id = $1
+ORDER BY created_at ASC;
+
+```
+
+I will not detail every CRUD function here as the patterns for creating and reading are similar to users. However, the `deleteChirp` endpoint warrants a deep dive because it introduces **Authorization**.
+
+It is not enough to simply check if the user is logged in. We must ensure they *own* the specific chirp they are trying to delete.
+
+We rely on the `GetBearerToken` helper to extract the JWT from the request headers. For a full breakdown of how we parse and validate these tokens, refer to my deep dive on [Go Authorization and Authentication](/project/go-authorization-and-authentication).
+
+```go title="main.go"
+func (cfg *apiConfig) deleteChirp(w http.ResponseWriter, r *http.Request) {
+  // 1. Authenticate: Is this a valid user
+  token, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "Couldn't find JWT")
+		return
+	}
+	userID, err := auth.ValidateJWT(token, cfg.jwtSecret)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "Couldn't validate JWT")
+		return
+	}
+
+  // 2. Parse the ID from the URL
+  chirpIDString := r.PathValue("chirpID")
+	chirpID, err := uuid.Parse(chirpIDString)
+	if err != nil {
+		log.Printf("Invalid chirp ID: %v", err)
+		respondWithError(w, 400, "Couldn't parse chirp ID")
+		return
+	}
+
+  // 3. Database lookup: Who own this chirp
+  chirp, err := cfg.query.GetChirp(r.Context(), chirpID)
+	if err != nil {
+		respondWithError(w, http.StatusNotFound, "Chirp not found")
+		return
+	}
+
+  // 4. Authorize: Does the requester match the owner
+	if chirp.UserID != userID {
+		respondWithError(w, http.StatusForbidden, "You are not the author of this chirp")
+		return
+	}
+
+  // 5. Execute
+  err = cfg.query.DeleteChirp(r.Context(), database.DeleteChirpParams{
+		ID:     chirpID,
+		UserID: userID,
+	})
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't delete chirp")
+		return
+	}
+
+  w.WriteHeader(http.StatusNoContent)
+}
+```
+
+Notice the distinction between **401 Unauthorized** and **403 Forbidden**:
+
+* **401:** "I don't know who you are". The token is missing or invalid.
+* **403:** "I know who you are, but you can't do this". The token is valid, but the user does not own the resource.
+
+This pattern — **Authenticate -> Fetch Resources -> Check Ownership -> Execute** formed the backbone of secure RESTful design.
+
+### Wiring it All Together
+
+Finally, with all our endpoints created, we must register them to our server mux so the application knows how to route traffic. We map each HTTP verb and path to the corresponding handler function in `main()`.
+
+```go title="main.go"
+func main(){
+  // ... database connection and config setup ...
+
+  mux.HandleFunc("POST /api/users", apiCfg.handleUser)
+  mux.HandleFunc("POST /api/login", apiCfg.handleLogin)
+  mux.HandleFunc("DELETE /api/chirps/{chirpID}", apiCfg.deleteChirp)
+
+  server.ListenAndServe()
+}
+```
+
+# Conclusion
+
+We started this journey with a simple TCP listener and evolve it into a robust backend server. We tackled database migrations with Postgres, type-safe SQL with `sqlc`, and a stateless authentication system using JWTs.
+
+While there are many features left to add — webhooks, image processing, or stricter validation — the foundation is solid. The pattern we established here — configuration struct, dependency injection, and DTOs will support the application as it scales from a single <File>main.go</File> file into a complex microservice.

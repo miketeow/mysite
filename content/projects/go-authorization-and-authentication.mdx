@@ -163,6 +163,17 @@ When generating the token, we adhere to standard claims to ensure interoperabili
 
 The server combines these claims with the secret to generate the final `Header.Payload.Signature` string.
 
+After storing this secret token in the <File>.env</File> file, we must also do dependency injection on the `apiCfg` by accessing this value in the main function.
+
+```go title="main.go"
+func main(){
+  apiCfg := &apiConfig{
+    // other config
+		jwtSecret:      os.Getenv("JWT_SECRET"),
+	}
+}
+```
+
 ### The "Bearer" Token Standard
 
 The use of the `Bearer` prefix is a widely accepted industry standard. Technically we could use any word—even `MagicKey`—but using `Bearer` ensures our API is compatible with standard HTTP clients like Postman or cURL. The term comes from the financial world: unlike a credit card which is identity-based, a "Bearer bond" implies that **possession equals ownership**. You do not have to prove your identity, you simply hold the bond. This fits the description of a JWT perfectly.
@@ -342,17 +353,80 @@ We use this to create a token during the `handleLogin` endpoint and store it in 
 
 ```go title="main.go"
 func (cfg *apiConfig) handleLogin(w http.ResponseWriter, r *http.Request) {
-  // .. other code
-  refreshTokenStr, err := auth.MakeRefreshToken()
-  if err != nil {
+	type parameter struct {
+		Email            string `json:"email"`
+		Password         string `json:"password"`
+		ExpiresInSeconds int    `json:"expires_in_seconds"` //Optional
+	}
+
+	decoder := json.NewDecoder(r.Body)
+	params := parameter{}
+	err := decoder.Decode(&params)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Something went wrong")
+		return
+	}
+
+	// Handle Expiration Logic
+	defaultExpiry := time.Hour
+	if params.ExpiresInSeconds > 0 && time.Duration(params.ExpiresInSeconds)*time.Second < defaultExpiry {
+		defaultExpiry = time.Duration(params.ExpiresInSeconds) * time.Second
+	}
+
+	user, err := cfg.query.GetUserByEmail(r.Context(), params.Email)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "Incorrect email or password")
+		return
+	}
+	match, err := auth.CheckPasswordHash(params.Password, user.HashedPassword)
+	if err != nil {
+		log.Printf("User password not matched: %v", err)
+		respondWithError(w, http.StatusUnauthorized, "Incorrect email or password")
+		return
+	}
+	if !match {
+		respondWithError(w, http.StatusUnauthorized, "Incorrect email or password")
+		return
+	}
+
+	refreshTokenStr, err := auth.MakeRefreshToken()
+	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't create refresh token")
 		return
 	}
-  // create the token
-  _, err = cfg.query.CreateRefreshToken(r.Context(), database.CreateRefreshTokenParams{
+
+	now := time.Now().UTC()
+
+	_, err = cfg.query.CreateRefreshToken(r.Context(), database.CreateRefreshTokenParams{
 		Token:     refreshTokenStr,
 		UserID:    user.ID,
+		CreatedAt: now,
+		UpdatedAt: now,
 		ExpiresAt: time.Now().Add(time.Hour * 24 * 60), // 60 Days
+	})
+
+	// Create the Token
+	token, err := auth.MakeJWT(user.ID, cfg.jwtSecret, defaultExpiry)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't create token")
+		return
+	}
+
+	type response struct {
+		User
+		Token        string `json:"token"`
+		RefreshToken string `json:"refresh_token"`
+	}
+
+	respondWithJSON(w, http.StatusOK, response{
+		User: User{
+			ID:          user.ID,
+			CreatedAt:   user.CreatedAt,
+			UpdatedAt:   user.UpdatedAt,
+			Email:       user.Email,
+		},
+		Token:        token,
+		RefreshToken: refreshTokenStr,
 	})
 }
 
@@ -360,16 +434,26 @@ func (cfg *apiConfig) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 Finally, we need endpoints to renew the Access Token or revoke the Refresh Token.
 
-```go title="auth.go"
+```go title="main.go"
 func (cfg *apiConfig) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	refreshToken, err := auth.GetBearerToken(r.Header)
-
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "Couldn't find token")
+		return
+	}
 	user, err := cfg.query.GetUserFromRefreshToken(r.Context(), database.GetUserFromRefreshTokenParams{
 		Token:     refreshToken,
 		ExpiresAt: time.Now().UTC(),
 	})
-
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "Invalid refresh token")
+		return
+	}
 	accessToken, err := auth.MakeJWT(user.ID, cfg.jwtSecret, time.Hour)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't create access token")
+		return
+	}
 
 	respondWithJSON(w, http.StatusOK, struct {
 		Token string `json:"token"`
@@ -380,7 +464,10 @@ func (cfg *apiConfig) handleRefresh(w http.ResponseWriter, r *http.Request) {
 
 func (cfg *apiConfig) handleRevoke(w http.ResponseWriter, r *http.Request) {
 	refreshToken, err := auth.GetBearerToken(r.Header)
-
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "Couldn't find token")
+		return
+	}
 	err = cfg.query.RevokeRefreshToken(r.Context(), database.RevokeRefreshTokenParams{
 		Token: refreshToken,
 		RevokedAt: sql.NullTime{
@@ -388,6 +475,11 @@ func (cfg *apiConfig) handleRevoke(w http.ResponseWriter, r *http.Request) {
 			Valid: true,
 		},
 	})
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't revoke token")
+		return
+	}
+
 	w.WriteHeader(http.StatusNoContent)
 }
 ```
@@ -406,6 +498,21 @@ UPDATE refresh_tokens
 SET revoked_at = $2, updated_at = $2
 WHERE token = $1;
 ```
+
+### A Note on Nullable Types
+
+You might notice the use of `sql.NullTime` in the `handleRevoke` function.
+
+```go
+RevokedAt: sql.NullTime{
+    Time:  time.Now().UTC(),
+    Valid: true,
+},
+```
+
+This is necessary because the `revoked_at` column is defined as nullable in our database schema. An active token has `NULL` in this column, so `sqlc` generates the Go parameter type as `sql.NullTime` rather than a standard `time.Time` to ensure safety.
+
+This is similar to how TypeScript forces you to handle `null | Date` explicitly. By passing `Valid: true`, we are telling the database driver that even though this field *can* be null, in this specific update operation, we are providing a concrete, valid timestamp.
 
 ## A Critical Note on Storage and Security
 
