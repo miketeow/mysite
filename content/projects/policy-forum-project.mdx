@@ -1,0 +1,769 @@
+---
+title: "Building a Policy Forum: Next.js, Go, and LLM Summaries"
+publishedAt: "2026-03-18"
+description: "A full-stack monorepo project documenting the journey of wiring a Next.js frontend to a Go backend with PostgreSQL."
+tags: ["nextjs", "typescript", "go", "postgresql", "sqlc"]
+repositoryUrl: "https://github.com/miketeow/policy-forum-project"
+techStack: ["Next.js 16", "Tailwind CSS", "Go", "Shadcn UI", "PostgreSQL", "pgx"]
+---
+
+# Introduction
+
+This is a custom project using Next.js for the frontend and Go for the backend. I decided to build this without relying on video tutorials or courses: every coding and architectural decision is the result of brainstorming sessions with Gemini.
+
+Initially, I just wanted a sandbox to combine my Next.js and Go experience. Gemini suggested building a standard Invoice PDF Generator. I pushed back because I wanted to implement an LLM-driven summary feature. We eventually agreed on a Policy Forum project. Users can register accounts, complete KYC verification, and post their thoughts. It functions as a standard CRUD app at its core, but the twist is using a lightweight LLM to synthesize posts from different users into a single, cohesive summary.
+
+## Project Structure
+
+Because I am using Next.js and Go, I organized this as a monorepo—a backend and frontend folder living side-by-side in the same repository. I adopted the recommended Go backend directory structure and the standard Next.js app router structure for the frontend.
+
+On the frontend, I separated pages with distinct purposes like sign-in and sign-up into distinct routes to make metadata and SEO easier to handle. I also stuck strictly to the principle of keeping client components as small as possible and pushing them as far down the component tree as I could.
+
+I won't detail every single architectural decision or CRUD function. I will only focus on the highly relevant technical hurdles.
+
+## Taming CORS (Cross-Origin Resource Sharing)
+
+The very first roadblock was handling CORS. Since the Next.js frontend and the Go backend run on different URLs during development, the backend needs a middleware to explicitly trust the frontend. Setting up CORS means telling the backend which frontend URLs, HTTP methods, and headers are safe.
+
+```go title="main.go"
+
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// tell browser to allow requests from this origin
+		w.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
+		// tell browser to allow these HTTP methods
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		// tell browser to allow these headers
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		// move on to next handler
+		next.ServeHTTP(w, r)
+	})
+}
+
+```
+
+One fascinating detail about allowed methods is the `OPTIONS` method. This is strictly required when your application uses different frontend and backend URLs.
+
+Imagine a scenario where a user visits the real website at <Url>https://www.policy-forum.com</Url>, logs in, and receives a session cookie in their browser. Later, that same user might stumble onto a malicious website at <Url>https://www.policy-fake.com</Url>. A hacker could write a JavaScript `fetch` request aiming at <Url>https://api.policy-forum.com/delete-account</Url> using the `DELETE` method to silently wipe the user's account.
+
+Here is how the browser defends against this exact attack. When the browser detects a cross-origin request modifying data, it pauses the `DELETE` action. It automatically fires an invisible, preflight `OPTIONS` request to the Go server first. The browser forcefully attaches an unfakeable header: `Origin: https://www.policy-fake.com`.
+
+The Go server processes this preflight and sends back its configured rules: `Access-Control-Allow-Origin: https://www.policy-forum.com`. The browser receives this, compares the URLs, sees a mismatch, and flat-out refuses to send the actual `DELETE` request.
+
+Because this protection is hardcoded into the browser itself, a hacker could bypass it using tools like Postman or a custom Python script. However, since those tools are running outside the user's browser, they won't have the user's authentic session cookie. The Go server will simply reject the naked request with a 401 Unauthorized Error.
+
+With CORS configured and a successful connection established between frontend and backend, I moved on to the database layer.
+
+## Database Architecture
+
+For local development, I am spinning up a PostgreSQL database using Docker. I plan to migrate to a serverless database platform once the project is ready for deployment.
+
+In the Go ecosystem, you will see the `pq` driver in a lot of older tutorials. I decided to use the modern alternative: the `pgx` library. For schema migrations, I chose `goose`, and for generating type-safe Go code from SQL queries, I went with `sqlc`. I prefer this stack because it keeps me in control. I am writing pure PostgreSQL queries instead of learning a proprietary ORM syntax.
+
+```sql title="001_create_users_table.sql"
+
+-- +goose Up
+CREATE TABLE users (
+    id UUID PRIMARY KEY,
+    name TEXT NOT NULL,
+    email TEXT UNIQUE NOT NULL,
+    hashed_password TEXT NOT NULL,
+    kyc_status TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL
+);
+
+-- +goose Down
+DROP TABLE users;
+
+```
+
+The queries themselves are written in raw SQL. The special comments are required by `sqlc` to generate the matching Go interfaces and structs.
+
+```sql title="internal/store/queries/users.sql"
+
+-- name: CreateUser :one
+INSERT INTO users (id, name, email, hashed_password, kyc_status, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, name, email, kyc_status, created_at, updated_at;
+
+```
+
+### The `pgx` Type Override Problem
+
+One hurdle I hit immediately was an incompatible type error generated by `sqlc`. Because I am using the `pgx` driver, `sqlc` sees `TIMESTAMP WITH TIME ZONE` and generates a custom `pgtype.Timestamptz`. It does the same for UUIDs, generating `pgtype.UUID`.
+
+To keep my Go application code clean and agnostic to the specific database driver, I had to explicitly override these types in the <File>sqlc.yaml</File> configuration file to use standard Go types. The `pg_catalog` prefix is just the internal namespace PostgreSQL uses for its default types.
+
+```yaml title="sqlc.yaml"
+
+version: "2"
+sql:
+  - engine: "postgresql"
+    queries: "internal/store/queries/"
+    schema: "internal/store/migrations/"
+    gen:
+      go:
+        package: "store"
+        out: "internal/store"
+        # These two settings are critical for modern Go.
+        # They force sqlc to use pgx types and standard Go time.Time
+        sql_package: "pgx/v5"
+        emit_interface: true
+        emit_json_tags: true
+        overrides:
+          - db_type: "uuid"
+            go_type:
+              import: "github.com/google/uuid"
+              type: "UUID"
+          - db_type: "pg_catalog.timestamptz"
+            go_type:
+              import: "time"
+              type: "Time"
+          - db_type: "pg_catalog.timestamp"
+            go_type:
+              import: "time"
+              type: "Time"
+
+```
+
+While this configuration solves the compatibility issue, the reason `pgx` introduces these custom types in the first place is actually a brilliant piece of performance optimization.
+
+<DeepDive title="Why pgx Uses Custom pgtype Structs">
+
+Imagine you have a database column defined as `AGE INT NULLABLE`. If you use a standard Go `int` to read a row where the age is actually NULL, Go's zero-value behavior kicks in and assigns it a `0`. Your frontend might then render "0 years old". You lose the ability to tell whether the user is a newborn baby or if they simply left the field blank.
+
+The traditional Go solution is to use an integer pointer `*int` for nullable columns. If the value is genuinely NULL, the pointer holds a `nil` reference. For a standard application, this is fine. But if you are querying millions of rows, your server has to allocate millions of tiny integer pointers on the heap memory. This triggers heavy garbage collection and tanks your performance.
+
+The author of `pgx` bypassed this by introducing `pgtype`. Instead of pointers, `pgtype` uses a flat struct allocated directly on the stack:
+
+```go
+type Int4 struct{
+    Int32 int32
+    Valid bool
+}
+```
+
+When the database returns a NULL, `pgx` sets `Int32 = 0` and `Valid = false`. You just check the boolean. This entirely avoids heap allocations and pointer dereferencing for null checks. It is a great reminder to avoid making columns NULLABLE unless absolutely necessary, as it adds structural overhead when scaling to massive datasets.
+
+</DeepDive>
+
+### Shifting ID Generation to the Server
+
+Another architectural decision I made was to keep the database schema as dumb as possible. PostgreSQL is perfectly capable of generating its own UUIDs and timestamps using functions like `gen_random_uuid()` or `NOW()`. I chose to leave those out of the SQL layer entirely and handle the generation inside the Go server.
+
+From a distributed systems perspective, relying on the database for generation creates blind spots. Modern applications often rely on serverless deployments. Your Go server might spin up on Vercel in one geographic region, while your database is hosted in an entirely different timezone. If they aren't strictly synchronized to UTC, you end up with corrupted, mismatched timestamp data.
+
+There is also the problem of idempotency during network retries. If the Go server sends an `INSERT` query but the network connection drops right before the database sends back the success acknowledgment, the Go server assumes the request failed. It will retry and send the same query again. If PostgreSQL is generating the IDs, it will happily create a second, duplicate user with a brand new ID.
+
+By generating the UUID in the Go server, a network retry simply attempts to insert the exact same UUID. The database will catch the duplicate primary key and safely reject it, preventing duplicate records.
+
+```go title="main.go"
+
+now := time.Now().UTC()
+args := store.CreateUserParams{
+	ID:             uuid.New(),
+	Name:           req.Name,
+	Email:          req.Email,
+	HashedPassword: hashedPassword,
+	KycStatus:      "UNVERIFIED",
+	CreatedAt:      now,
+	UpdatedAt:      now,
+}
+
+````
+
+### Wiring pgxpool
+
+Under the hood, `pgx` is a Go library that translates our Go code into the Postgres Wire Protocol—the binary language the database actually understands—sends it over the network, and translates the binary response back into Go structs.
+
+With the logic sorted, the next step was wiring `pgx` into <File>main.go</File>. A production database requires a connection pool to safely handle concurrent HTTP requests.
+
+I installed `pgxpool`:
+
+```bash
+$ go get github.com/jackc/pgx/v5/pgxpool
+```
+To set up the database pool, we need to pass it a context. I used the root context `context.Background()` because it has no timeout and never cancels. This is exactly what we want for a connection pool: it needs to stay alive for the entire lifecycle of the application until we explicitly turn the server off.
+
+Instead of taking the lazy route and defining a global `var DB *pgxpool.Pool`, I created an `application` struct. By attaching the database pool to this struct and turning all HTTP handlers into methods on this struct, I can safely pass the database connection to any route that needs it. Global variables make unit testing a nightmare and invite race conditions, so the struct approach is much safer.
+
+````go title="main.go"
+
+type application struct {
+	db *store.Queries
+}
+
+func main() {
+	// connect to database using pgxpool for concurrency safety
+	dsn := "postgres://admin:password123@localhost:5432/policy_forum?sslmode=disable"
+	pool, err := pgxpool.New(context.Background(), dsn)
+	if err != nil {
+		log.Fatalf("Unable to connect to database: %v\n", err)
+	}
+	defer pool.Close()
+
+	log.Println("Successfully connect to the PostgreSQL database")
+
+	// Initialize the application atruct with the sqlc-generated store
+	app := &application{
+		db: store.New(pool),
+	}
+
+	// Create private router
+	mux := http.NewServeMux()
+
+	// Register health check handler with GET prefix
+	mux.HandleFunc("GET /health", app.healthCheckHandler)
+	mux.HandleFunc("POST /api/auth/register", app.registerHandler)
+
+	// rest of the code ...
+
+}
+
+func (app *application) registerHandler(w http.ResponseWriter, r *http.Request) {}
+
+````
+
+Pay close attention to the line `app := &application{ db: store.New(pool) }`. When we run `sqlc generate`, it creates a <File>internal/store/db.go</File> file containing a `Queries` struct and a `New()` function. Calling `store.New(pool)` requests that `Queries` object, which is packed with all our database functions. By attaching it to our `app` struct, we can simply call `app.db.CreateUser()` from anywhere in our handlers later on.
+
+## Register User
+
+Next, I built out the register handler to parse incoming requests, create the user, and send a clean JSON response back to the Next.js frontend.
+
+First, I defined the exact structure of the incoming JSON payload using standard struct tags.
+
+```go title="main.go"
+
+type RegisterRequest struct {
+	Name     string `json:"name"`
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
+func (app *application) registerHandler(w http.ResponseWriter, r *http.Request) {
+	var req RegisterRequest
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
+		return
+	}
+
+	// hash the password
+	hashedPassword, err := auth.HashPassword(req.Password)
+	if err != nil {
+		http.Error(w, "Failed to hash password", http.StatusInternalServerError)
+		return
+	}
+
+	// prepare the database transfer object
+	now := time.Now().UTC()
+	args := store.CreateUserParams{
+		ID:             uuid.New(),
+		Name:           req.Name,
+		Email:          req.Email,
+		HashedPassword: hashedPassword,
+		KycStatus:      "UNVERIFIED",
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+
+	user, err := app.db.CreateUser(r.Context(), args)
+	if err != nil {
+		log.Printf("Database error: %v", err)
+		// in production, check for unique constraint violation (e.g., email already exists)
+		http.Error(w, "Failed to create user", http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("SUCCESS: User %s created with ID %s", user.Name, user.ID)
+
+	// send json response back to nextjs frontend
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]string{
+		"message": "Account created successfully",
+	})
+}
+
+```
+
+The logic here follows standard Go best practices. I set up the proper struct, handled errors immediately after every function call, and generated critical values like the UUID and the UTC timestamp right in the handler rather than leaning on the database.
+
+### Sign-Up Form
+
+Over on the frontend, I used `react-hook-form` based on the official (Shadcn UI documentation) [https://ui.shadcn.com/docs/forms/react-hook-form] . The only major departure from their guide is that I am using a custom `fetch` function because I need to communicate directly with my Go backend instead of a standard Next.js API route.
+
+```tsx title="sign-up-form.tsx"
+
+async function onSubmit(values: z.infer<typeof SignUpSchema>) {
+  const res = await fetch(getApiUrl("/api/auth/register"), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(values),
+  });
+
+  if (res.ok) {
+    const data = await res.json();
+    toast.success(data.message);
+    redirect("/sign-in");
+  } else {
+    toast.error("Something went wrong");
+  }
+}
+
+```
+
+To keep things clean, I created a small helper function for all my Go server requests. This saves me from manually updating URLs across the entire codebase when I eventually deploy the application to a production domain. I also rely on (t3-env)[https://env.t3.gg/docs/nextjs] to ensure my environment variables are type-safe.
+
+```ts title="api.ts"
+
+import { env } from "@/env";
+
+// This would be NEXT_PUBLIC_API_URL=http://localhost:8080 inside .env.local
+export const API_BASE_URL = env.NEXT_PUBLIC_API_URL;
+
+export function getApiUrl(path: string) {
+  // make sure no double slashes
+  const base = API_BASE_URL.replace(/\/$/, "");
+  const cleanPath = path.startsWith("/") ? path : `/${path}`;
+  return `${base}${cleanPath}`;
+}
+
+```
+
+## Password Hashing and JWTs
+
+Before writing the login function, I needed to tackle password hashing and JSON Web Tokens. I won't dump the entire contents of my <File>password.go</File> file here because it relies heavily on standard cryptography libraries.
+
+The key takeaway is my choice of algorithm: `argon2id`. You will see `bcrypt` used in a lot of older tutorials, but modern security practices recommend `argon2id` because its memory-hard properties make it significantly more resistant to modern GPU brute-force attacks.
+
+Before generating the JWT, we need a secret key. I installed `godotenv` to load my <File>.env</File> file securely instead of relying purely on system-level environment variables.
+
+```bash
+go get github.com/joho/godotenv
+```
+
+I created the <File>.env</File> file at the root of the backend folder. For local development, it looks like this:
+
+```bash title=".env"
+PORT=8080
+JWT_SECRET=your-own-custom-secret-key
+```
+
+You can generate a genuinely secure key by running `openssl rand -base64 32` in your terminal.
+
+Inside <File>main.go</File>, I load these variables right as the server boots up and attach the JWT secret to the `application` struct so our handlers can access it safely.
+
+```go title="main.go"
+type application struct {
+	jwtSecret []byte
+	db        *store.Queries
+}
+
+func main() {
+	// load environment variables
+	if err := godotenv.Load(); err != nil {
+		log.Println("No .env file found, falling back to system environment variables")
+	}
+
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if jwtSecret == "" {
+		log.Fatal("JWT_SECRET environment variable is required but not set")
+	}
+	//...
+}
+```
+
+Next, I set up the functions to generate and verify tokens inside <File>internal/auth/jwt.go</File>.
+
+```go title="jwt.go"
+package auth
+
+import (
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
+)
+
+// define the structure of the data that we put into the JWT claims
+type CustomClaims struct {
+	UserID    uuid.UUID `json:"user_id"`
+	KycStatus string    `json:"kyc_status"`
+	jwt.RegisteredClaims
+}
+
+func GenerateToken(secretKey []byte, userID uuid.UUID, kycStatus string) (string, error) {
+	// create the payload (claims)
+	claims := CustomClaims{
+		UserID:    userID,
+		KycStatus: kycStatus,
+		RegisteredClaims: jwt.RegisteredClaims{
+			// token expires in 24 hours
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
+			// issues at this exact moment
+			IssuedAt: jwt.NewNumericDate(time.Now()),
+			// The entity that creates this token
+			Issuer: "public-policy-forum",
+		},
+	}
+
+	// create the token using HS256 algorithm
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+
+	// sign the token with our secret key
+	signedToken, err := token.SignedString(secretKey)
+	if err != nil {
+		return "", err
+	}
+
+	return signedToken, nil
+}
+
+func VerifyToken(secretKey []byte, tokenString string) (*CustomClaims, error) {
+	token, err := jwt.ParseWithClaims(tokenString, &CustomClaims{}, func(t *jwt.Token) (any, error) {
+		return secretKey, nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	if claims, ok := token.Claims.(*CustomClaims); ok && token.Valid {
+		return claims, nil
+	}
+
+	return nil, jwt.ErrSignatureInvalid
+}
+
+```
+
+You can customize the JWT struct depending on your application's specific needs. I chose to embed the `user_id` and `kyc_status` directly in the claims. This allows my backend middleware to perform quick authorization checks without needing to query the database on every single request.
+
+## Signing In The User
+
+With our crypto tools ready, we can build the login handler. First, I wrote the SQL query to retrieve a user by their email.
+
+```sql title="/queries/users.sql"
+
+-- name: GetUserByEmail :one
+SELECT id, name, email, hashed_password, kyc_status, created_at, updated_at
+FROM users
+WHERE email = $1 LIMIT 1;
+
+```
+
+Running `sqlc generate` turns this into a type-safe Go method.
+
+The login flow is straightforward: retrieve the user by email, compare the hashed password, and if everything matches, generate the JWT and send it back to the client.
+
+```go title="main.go"
+type LoginRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
+func (app *application) loginHandler(w http.ResponseWriter, r *http.Request) {
+	var req LoginRequest
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	user, err := app.db.GetUserByEmail(r.Context(), req.Email)
+	if err != nil {
+		http.Error(w, "Invalid email or password", http.StatusUnauthorized)
+		return
+	}
+
+	// compare plain text password with the hashed password
+	match, err := auth.ComparePasswordAndHash(req.Password, user.HashedPassword)
+
+	if err != nil || !match {
+		http.Error(w, "Invalid email or password", http.StatusUnauthorized)
+		return
+	}
+
+	tokenString, err := auth.GenerateToken(app.jwtSecret, user.ID, user.KycStatus)
+	if err != nil {
+
+		http.Error(w, "Failed to generate token", http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("SUCCESS: User %s logged in successfully and received a token", user.Email)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+
+	json.NewEncoder(w).Encode(map[string]string{
+		"message": "Login successful",
+		"token":   tokenString,
+	})
+}
+```
+
+### Managing the Session in Next.js
+
+Once the Go server verifies the credentials and returns the JWT, the frontend needs to store it safely. Storing tokens directly in an HTTP-only browser cookie is significantly more secure against cross-site scripting attacks compared to leaving them exposed in local storage.
+
+Because we are using Next.js, we can utilize Server Actions to securely interact with the browser's cookies from the server side. I also set up a delete function to handle user logouts.
+
+```ts title="auth.ts"
+
+"use server";
+
+import { revalidatePath } from "next/cache";
+import { cookies } from "next/headers";
+
+export async function createSession(token: string) {
+  // store the token in http-only cookie
+  (await cookies()).set("session", token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    // token expires in 24 hours
+    maxAge: 60 * 60 * 24,
+  });
+
+  revalidatePath("/", "layout");
+}
+
+export async function deleteSession() {
+  (await cookies()).delete("session");
+  revalidatePath("/", "layout");
+}
+
+```
+
+The sign-in form is practically identical to the sign-up form. The only real difference is the submission logic.
+
+```ts title="sign-in-form.tsx"
+async function onSubmit(values: z.infer<typeof SignInSchema>) {
+  const res = await fetch(getApiUrl("/api/auth/login"), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(values),
+  });
+
+  if (res.ok) {
+    const data = await res.json();
+    await createSession(data.token);
+    toast.success(data.message);
+    // navigate without polluting the back history
+    router.push("/dashboard");
+  } else {
+    toast.error("Something went wrong");
+  }
+}
+```
+
+I included `revalidatePath` in the session logic because my frontend header component dynamically renders a user profile widget when someone is logged in. Whenever a session is created or destroyed, this command forces Next.js to re-evaluate the layout and update the UI instantly.
+
+Once a user successfully logs in, they are redirected to the dashboard. This is a private route. Any unauthenticated user attempting to access <Url>/dashboard</Url> should be bounced back to <Url>/sign-in</Url>.
+
+To achieve this, I implemented two layers of security. The first layer lives in the Next.js middleware. Because Next.js is a full-stack framework, we can intercept requests at the edge before a page even renders. This check is incredibly fast and efficient since we do not even need to make a network trip to the Go backend.
+
+```ts title="proxy.ts"
+
+import { NextResponse } from "next/server";
+
+import type { NextRequest } from "next/server";
+
+const protectedRoutes = ["/dashboard"];
+
+const authRoutes = ["/sign-in", "/sign-up"];
+
+export function proxy(request: NextRequest) {
+  const path = request.nextUrl.pathname;
+
+  const isAuth = request.cookies.has("session");
+
+  const isProtectedRoute = protectedRoutes.some((route) =>
+    path.startsWith(route),
+  );
+  if (isProtectedRoute && !isAuth) {
+    return NextResponse.redirect(new URL("/sign-in", request.url));
+  }
+
+  const isAuthRoute = authRoutes.some((route) => path.startsWith(route));
+  if (isAuthRoute && isAuth) {
+    return NextResponse.redirect(new URL("/dashboard", request.url));
+  }
+
+  return NextResponse.next();
+}
+
+export const config = {
+  matcher: ["/((?!api|_next/static|_next/image|favicon.ico).*)"],
+};
+
+```
+
+This proxy only checks for the sheer existence of a session cookie, making it blazing fast. It does not cryptographically verify the JWT inside the cookie.
+
+When a page actually needs to display sensitive user information, we must verify the token's authenticity. For this, we need to talk to the Go backend.
+
+I created a <File>session.ts</File> file with a `getSession` function. I wrapped this function in the React `cache` utility. This prevents duplicate network requests if multiple components on the same page ask for the user session simultaneously.
+
+This function sends a POST request to the Go server at <Url>/api/users/me</Url> and attaches the Bearer token extracted from the cookie. The Go handler verifies the token and returns the user data if valid.
+
+```ts title="session.ts"
+import { cookies } from "next/headers";
+import { cache } from "react";
+import { getApiUrl } from "./api";
+
+export const getSession = cache(async () => {
+  const cookieStore = await cookies();
+  const token = cookieStore.get("session")?.value;
+
+  if (!token) return null;
+
+  try {
+    const res = await fetch(getApiUrl("/api/users/me"), {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      if (res.status === 401 || res.status === 403) {
+        return null;
+      }
+
+      console.error(`[Auth] Backend error checking session: ${res.status}`);
+      return null;
+    }
+    const user = await res.json();
+    return user;
+  } catch (error) {
+    console.error("[Auth] Fatal error connecting to Go backend", error);
+    return null;
+  }
+});
+
+```
+
+### Go Authorization Middleware
+
+Over on the Go side, we need a corresponding middleware to intercept incoming requests, extract the Bearer token, and verify it.
+
+I wrote this functionality as a middleware rather than stuffing it into a standard handler. I want the handler responsible for fetching user profiles to be completely dumb and focused on a single task. By extracting the verification logic into a middleware located in <File>cmd/api/middleware.go</File>, I can easily wrap any future API endpoints that require authentication.
+
+```go title="middleware.go"
+package main
+
+import (
+	"context"
+	"net/http"
+	"policy-forum-backend/internal/auth"
+	"strings"
+)
+
+// create custom type for context key to prevent name collision in memory
+type contextKey string
+
+const userIDKey = contextKey("userID")
+
+func (app *application) requireAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// check for authorization header
+		authHeader := r.Header.Get("Authorization")
+		if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
+			http.Error(w, "Unauthorized: Missing token", http.StatusUnauthorized)
+			return
+		}
+
+		// extract the token string
+		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+
+		// verify it
+		claims, err := auth.VerifyToken(app.jwtSecret, tokenString)
+		if err != nil {
+			http.Error(w, "Unauthorized: Invalid token", http.StatusUnauthorized)
+			return
+		}
+
+		// injection: put uuid safely into the context
+		ctx := context.WithValue(r.Context(), userIDKey, claims.UserID)
+
+		// create a new request with the updatedcontext
+		req := r.WithContext(ctx)
+
+		// allow user to pass through with actual handler
+		next.ServeHTTP(w, req)
+	}
+}
+
+```
+
+This middleware does more than just block bad requests. It extracts the UUID from the verified JWT and passes it down to the next handler.
+
+Because Go HTTP handlers have a strict signature requiring only a response writer and a request pointer, we cannot simply add a third parameter for the user ID. Instead, Go provides a Context object attached to the request. Think of it like a secure backpack where we can store key-value pairs for the lifespan of that specific HTTP request.
+
+The intuitive approach would be to store it using a simple string:
+
+```go
+ctx := context.WithValue(r.Context(), "userID", claims.UserID)
+````
+
+However, doing this triggers a name collision warning in Go.
+
+Context is a global concept. The exact same context object is passed through your custom middleware, the router, and any third-party libraries you might be using. If a third-party logging library also decides to store data under the exact string `"userID"`, it will overwrite your authenticated UUID. Your downstream handler will suddenly receive a logging ID instead of a user ID, breaking the application.
+
+To solve this elegantly, Go allows us to make context keys mathematically unique by defining a custom, unexported type based on a string.
+
+```go
+type contextKey string
+
+const userIDKey = contextKey("userID")
+```
+
+In Go, `contextKey("userID")` is fundamentally different from the raw string `"userID"`. Because `contextKey` is defined within our specific `main` package, it acts as a unique cryptographic fingerprint. If a third-party library uses the exact same line of code, it generates a `thirdParty.contextKey` which the compiler knows is entirely distinct from our `main.contextKey`.
+
+### The Protected Dashboard
+
+With the Go backend secured, here is how we hook everything up in the Next.js frontend to render the private data.
+
+```ts title="/dashboard/page.tsx"
+
+interface UserProfile {
+  id: string;
+  name: string;
+  email: string;
+  kyc_status: string;
+  created_at: string;
+  updated_at: string;
+}
+export default async function Dashboard() {
+  const user: UserProfile = await getSession();
+
+  if (!user) {
+    redirect("/sign-in");
+  }
+
+  return (
+  <div>
+    <h1>Welcome, {user.name}!</h1>
+    <p>Email: {user.email}</p>
+    <p>ID: {user.id}</p>
+    <p>KYC Status: {user.kyc_status}</p>
+  </div>
+  )
+}
+
+```
+
+With this final piece, we successfully fetch the authenticated user's profile from the Go backend and render it securely on the screen.

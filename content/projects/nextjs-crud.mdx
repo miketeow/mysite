@@ -1,0 +1,79 @@
+---
+title: "Next JS CRUD"
+publishedAt: "2026-04-14"
+description: "Build a simple Next JS CRUD application"
+tags: ["nextjs", "CRUD"]
+repositoryUrl: "https://github.com/miketeow/nextjs-crud"
+techStack: ["NextJS"]
+---
+
+# Introduction
+
+This project is a simple Next.js CRUD application—an inventory management system allowing users to create items, fill in various details, attach images and PDFs, and perform standard edit, read, and delete operations. This demonstrates common features and the standard project structure of a Next.js application. For the frontend, I rely on [Shadcn UI](https://ui.shadcn.com/docs/components). The backend uses [Drizzle](https://orm.drizzle.team/docs/get-started-postgresql) as the ORM, [Neon](https://neon.com/) for the serverless PostgreSQL database, and [Cloudfare R2](https://www.cloudflare.com/developer-platform/products/r2/) for object storage.
+
+## The Form
+
+For the item creation form, I combined `react-hook-form` and Zod with Shadcn UI components, mostly following the [official Shadcn documentation](https://ui.shadcn.com/docs/forms/react-hook-form). Configuring inputs to accept strictly strings, numbers, or non-negative values is easily handled through the Zod schema.
+
+Most inputs are fairly standard, but I wanted to improve the user experience for the price input specifically. I configured a few distinct behaviors for this field:
+
+1. It renders decimals automatically and locks to two decimal places, following the standard currency convention for Ringgit Malaysia.
+2. It strictly accepts non-negative numbers.
+3. It uses the `tel` HTML type instead of `number`. This brings up the standard number pad on mobile devices and prevents users from typing non-digit characters like 'e'—which standard number inputs allow for scientific notation.
+4. The frontend converts the decimal price into an integer before sending it to the backend, avoiding floating-point math bugs in the database.
+
+You can achieve all of this by installing a package like `react-number-format`. However, I chose to prompt an LLM to generate the necessary logic for my specific use case without adding another dependency. This aligns with a philosophy [Andrej Karpathy](https://x.com/karpathy/status/2036487306585268612) recently shared regarding the vulnerabilities of installing too many dependencies and risking supply chain attacks. Sometimes it is safer to just write or yoink the necessary code yourself.
+
+```ts title="item-form.tsx"
+<InputGroupInput
+  id={field.name}
+  {...field}
+  aria-invalid={fieldState.invalid}
+  type="tel"
+  min="0"
+  step="0.01"
+  placeholder="0.00"
+  value={displayValue}
+  onChange={(e) => {
+    // get raw string
+    const rawString = e.target.value;
+    // strip everything except number
+    const justDigits = rawString.replace(/\D/g, "");
+    // parse to integer cents
+    const cents = parseInt(justDigits || "0", 10);
+    // convert back to float for zod
+    const floatValue = cents / 100;
+    field.onChange(floatValue);
+  }}
+/>
+```
+
+## Server Actions
+
+Next, I wrote the server actions to handle the CRUD operations—the standard Next.js approach over traditional fetch APIs. My server actions handle a few critical steps:
+
+- Running a second round of validation, since a malicious actor can bypass frontend Zod validation.
+- Managing the math to ensure the price stays an integer before saving it to the database.
+- Revalidating the cache to refresh the page and render the latest inventory after a successful creation.
+
+Using server actions this way achieves two main benefits. First, it ensures end-to-end type safety because the exact same Zod schema validates both the frontend and backend. Second, Next.js handles the API routing under the hood, saving me from manually writing JSON stringification logic and custom headers for POST requests.
+
+## Data Table Inventory List
+
+I use the Shadcn [data-table](https://ui.shadcn.com/docs/components/radix/data-table) component to display all items. Under the hood, this relies on TanStack Table, which provides built-in utilities for sortable columns, pagination, and text filtering. I managed to make columns sortable and implement global text filtering with just a few configuration lines.
+
+Since this page fetches inventory data from the database, I implemented streaming by wrapping the entire data table component in a React Suspense boundary. This allows the user to see the page layout and a table skeleton immediately. The actual table renders once the server finishes retrieving the data, resulting in a much snappier perceived load time.
+
+## Edit and Delete Item
+
+The edit function reuses the <File>item-form.tsx</File> component originally built for creation. I simply check for initial data and pass it to a dedicated server action for updates.
+
+The delete function is similarly straightforward, but I wrapped the server action in a `useTransition` hook. This hook exposes an `isPending` state, letting me provide immediate visual feedback—like disabling the button and changing its text from "Delete" to "Deleting." More importantly, `useTransition` ensures the mutation does not block the UI. The user can still scroll and interact with the page while the deletion processes in the background.
+
+## Image and PDF
+
+For large objects like images and PDFs, the industry standard is to upload them to cloud storage like Cloudflare R2 and store the resulting URL string in the database. Setting up R2 is mostly just configuration, though I added safeguards to prevent malicious actors from spamming the upload function and running up my Cloudflare bill. I actually enabled a Next.js demo mode where uploads only work for me during local development.
+
+Handling the file input required a slight architectural shift. Instead of passing the image input directly into `react-hook-form` like the text fields, I used a separate `useState` to track the raw file data. This prevents a type mismatch. `react-hook-form` would expect a binary File object, but our database schema expects a string for the `imageUrl` column. If I bound them together, I would have to write a complex, disjointed Zod schema expecting a File on the client but a string on the server.
+
+By keeping the file in React state, the process splits into two distinct, clean steps: upload the binary file to Cloudflare R2 to get a URL string, and then submit that URL along with the rest of the form data to PostgreSQL. Once the image logic was working, applying the exact same pattern to the PDF upload was trivial.

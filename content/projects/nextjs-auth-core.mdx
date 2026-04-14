@@ -1,0 +1,1306 @@
+---
+title: "Next JS Authentication Core"
+publishedAt: "2026-01-28"
+description: "Build authentication in Next JS from scratch"
+tags: ["nextjs", "auth"]
+repositoryUrl: "https://github.com/miketeow/nextjs-auth-core"
+techStack: ["NextJS"]
+---
+
+# Introduction
+
+This post documents my process of building authentication in Next.js from scratch without relying on heavy libraries or abstractions. The goal is to understand the mechanics, not just the API surface. I’m following the [Next.js Authentication Master Class](https://youtu.be/yoiBv0K6_1U) tutorial but adapting it to my own preferences. This project comes right after my deep dives into a [Go HTTP server](/project/go-http-server.mdx) and [Go Authentication and Authorization](/project/go-authorization-and-authentication.mdx). Throughout this post, I will contrast this Node.js implementation with the Go strategies I used previously.
+
+> I created a basic frontend template in Next.js using TailwindCSS, ShadcnUI, and Drizzle ORM. This post focuses purely on the backend logic, so I won't detail the UI setup.
+
+## Password Hashing
+
+The first step is securing user credentials. We don't need to become cryptographers to do this right—we just need to understand the tools. Node.js includes a built-in `crypto` library which offers `scrypt`, a password-based key derivation function.
+
+The original `scrypt` function in Node.js uses a callback pattern. While the tutorial author manually wrapped this in a Promise to modernize it, I prefer using the standard `util.promisify`. This utility converts callback-based functions into specific Promise implementations automatically, keeping the codebase linear and readable.
+
+```ts title="passwordHasher.ts"
+import crypto from "crypto";
+import { promisify } from "util";
+
+const scryptAsync = promisify(crypto.scrypt);
+
+export async function hashPassword(password: string, salt: string) {
+  const normalizedPassword = password.normalize();
+  const derivedKey = (await scryptAsync(
+    normalizedPassword,
+    salt,
+    64,
+  )) as Buffer;
+  return derivedKey.toString("hex");
+}
+
+export function generateSalt() {
+  return crypto.randomBytes(16).toString("hex").normalize();
+}
+```
+
+The `normalize()` function is critical here. It ensures that the input string uses a standard Unicode representation. Without this, the same visual character—like an "ñ"—could be represented by different byte sequences on different keyboards, causing password verification to fail. We use a key length of 64 bytes to align with the SHA-512 standard, ensuring maximum entropy and resistance against brute-force attacks.
+
+I use an explicit type assertion `as Buffer` because `util.promisify` struggles to infer the complex overloads of `crypto.scrypt`. The documentation confirms that `scrypt` passes a `derivedKey` of type `NonSharedBuffer` (a subtype of Buffer) to its callback, so this assertion is safe.
+
+<DeepDive title="Why Promisify">
+
+To understand why I deviated from the tutorial's manual Promise wrapper, we need to look at the "Old Way" of handling asynchronous Node.js code: callbacks.
+
+```js
+import crypto from "crypto";
+
+// OLD WAY: We cannot return a string! We must accept a 'done' callback.
+function hashPasswordCallback(password, salt, done) {
+    // 1. We call the function
+    crypto.scrypt(password, salt, 64, (err, derivedKey) => {
+        // 2. We explicitly check for error
+        if (err) {
+            return done(err, null); // Stop and tell the caller we failed
+        }
+        // 3. We assume success and formatting logic here
+        const hex = derivedKey.toString("hex");
+
+        // 4. We call the callback with the result
+        done(null, hex);
+    });
+}
+```
+
+This functions partially, but it collapses when we need to chain operations. If we want to hash a password, save it to a database, and send an email, we end up with the infamous "Pyramid of Doom."
+
+```js
+// Assume these are other callback-based library functions
+function saveUserToDB(user, callback) { ... }
+function sendWelcomeEmail(email, callback) { ... }
+
+// THE PYRAMID OF DOOM
+function registerUser(email, password, finalDoneCallback) {
+    const salt = generateSalt();
+    // Level 1: Hash
+    hashPasswordCallback(password, salt, (err, hash) => {
+        if (err) {
+            console.error("Hashing failed");
+            return finalDoneCallback(err); // We have to manually bubble errors up
+        }
+        const newUser = { email, hash, salt };
+        // Level 2: Database
+        saveUserToDB(newUser, (err, savedUser) => {
+            if (err) {
+                console.error("DB failed");
+                return finalDoneCallback(err); // Repetitive error handling
+            }
+            // Level 3: Email
+            sendWelcomeEmail(savedUser.email, (err) => {
+                if (err) {
+                    console.error("Email failed");
+                    // Note: User is saved, but email failed. Partial failure state!
+                    return finalDoneCallback(err);
+                }
+                // SUCCESS at the bottom of the pit
+                finalDoneCallback(null, savedUser);
+            });
+        });
+    });
+}
+
+```
+
+This pattern makes code hard to read and brittle to refactor. Modern JavaScript solves this with Promises and `async/await`.
+
+In the tutorial, the author modernized this by manually wrapping the callback in a `new Promise`:
+
+```ts
+
+import crypto from "crypto";
+
+export function hashPassword(password: string, salt: string):Promise<string> {
+    return new Promise((resolve, reject) => {
+      crypto.scrypt(password.normalize(), salt, 64, (error, hash) => {
+        if (error) reject(error);
+        resolve(hash.toString("hex").normalize());
+      });
+    });
+}
+
+```
+
+This works, but I consider it a partial anti-pattern when a standard tool exists.
+
+Using `util.promisify` is superior for three reasons:
+
+1. **Safety:** It automatically handles error propagation. With `new Promise`, developers often forget to `reject(err)`, causing the app to hang silently on failure.
+2. **Standardization:** It is the battle-tested Node.js standard for interacting with legacy core libraries.
+3. **Brevity:** It reduces ten lines of boilerplate validation logic into a single line.
+
+This transformation allows us to use standard `try/catch` blocks for flow control—treating asynchronous code as if it were synchronous.
+
+</DeepDive>
+
+Using the same salt value results in the same hashed password. This predictability is a security flaw, which is why we must dynamically generate a unique salt for every user. In our user creation logic later on, we will need to store this unique salt alongside the user details in the database so we can retrieve it during login.
+
+### Sidenote: The Production Standard
+
+In a real production environment—even when building auth "from scratch"—we rarely manage salts manually or use raw `crypto.scrypt`. The current gold standard for password hashing is the **Argon2id** algorithm.
+
+Popular libraries like `node-argon2` abstract away the salt generation entirely. The output is a **PHC (Password Hashing Competition)** string. This string bundles the algorithm identifier, the configuration parameters, the unique salt, and the hash into a single line.
+
+Because the salt is embedded directly in the output string, we don't need to create or manage a separate "salt" column in our database. We just store the single hash string.
+
+If we were using Argon2, the implementation would look like this:
+
+```ts title="passwordHasher.ts"
+import * as argon2 from "node-argon2";
+export async function hashPasswordArgon(password: string) {
+  // Automatically generates salt and returns the PHC string
+  const hashedPassword = await argon2.hash(password);
+
+  return hashedPassword;
+}
+
+export async function verifyPassword(hashedPassword: string, password: string) {
+  // The library parses the salt from the hash string automatically
+  const result = await argon2.verify({
+    hash: hashedPassword, // value retrieved from user database,
+    password: password, // value from the login form,
+  });
+
+  return result;
+}
+```
+
+This is significantly cleaner, but for this project, I will stick to the manual `scrypt` implementation to fully understand the moving parts of salt management.
+
+## Session Management
+
+Before implementing the session logic, we need infrastructure. Session-based authentication relies on speed; checking a database for every single request is inefficient. Instead, we use Redis—an in-memory key-value store—to handle active sessions.
+
+While the tutorial suggests Upstash (a serverless Redis provider), I prefer spinning up my own instances locally using Docker to keep development self-contained.
+
+```yaml title="docker-compose.yaml"
+services:
+  db:
+    image: postgres:18-alpine
+    container_name: node-auth-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_PASSWORD=mypassword
+      - POSTGRES_USER=myuser
+      - POSTGRES_DB=authdb
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:alpine
+    container_name: next-auth-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+
+volumes:
+  pgdata:
+  redisdata:
+```
+
+Running `docker compose up -d` will spin up both the Postgres database and the Redis instance.
+
+### Setting up the Redis Client
+
+Since we are hosting Redis ourselves, we just need the connection string and a client library. I use `ioredis`, which is a robust, feature-rich Redis client for Node.js.
+
+```ts title="redis.ts"
+import { env } from "@/env";
+import Redis from "ioredis";
+
+const getRedisClient = () => {
+  if (env.REDIS_URL) {
+    return new Redis(env.REDIS_URL);
+  }
+
+  throw new Error("REDIS_URL is not defined");
+};
+
+export const redis = getRedisClient();
+```
+
+> **Note on Environment Variables:** You might notice I import `env` from `@/env` instead of using `process.env`. I use [t3-env](https://env.t3.gg/docs/nextjs) to enforce type safety and enable autocomplete for my environment variables. If you prefer a standard setup, you can simply swap `env.REDIS_URL` for `process.env.REDIS_URL`.
+
+### The Sign-Up Workflow (Server Action)
+
+We start with the server action. Although specific to Next.js, the logic here follows a universal backend pattern: **Validate -> Check Existence -> Hash -> Persist -> Authorize.**
+
+```tsx title="actions.ts"
+export async function signUp(unsafeData: z.infer<typeof signUpSchema>) {
+  // 1. Safe parsing using zod
+
+  const { success, data } = signUpSchema.safeParse(unsafeData);
+  if (!success) {
+    return "Unable to create account";
+  }
+
+  // 2. Check for existing user
+  const existingUser = await db.query.UserTable.findFirst({
+    where: eq(UserTable.email, data.email),
+  });
+
+  if (existingUser != null) return "Account already existed for this email";
+
+  // 3. Generate salt and hash (using our manual scrypt implementation)
+
+  const salt = generateSalt();
+  const hashedPassword = await hashPassword(data.password, salt);
+
+  // 4. Insert into database via Drizzle ORM
+  try {
+    const [user] = await db
+      .insert(UserTable)
+      .values({
+        name: data.name,
+        email: data.email,
+        password: hashedPassword,
+        salt,
+      })
+      .returning({ id: UserTable.id, role: UserTable.role });
+    if (user == null) return "Unable to create account";
+
+    // 5. Create user session
+    await createUserSession(user, await cookies());
+  } catch {
+    return "Unable to create account";
+  }
+
+  redirect("/");
+}
+```
+
+### Abstraction: The Cookie Adapter
+
+To manage sessions securely, we need to store the Session ID in a browser cookie with strict flags (`HttpOnly`, `Secure`). While we could use `next/headers` directly inside our logic, the tutorial adopts a **Dependency Injection** approach. We define a generic `Cookies` interface. This decouples our authentication logic from the framework, making it easier to test or port to a different backend (like Express or Fastify) later without rewriting the core logic.
+
+```ts title="session.ts"
+// A framework-agnostic interface for cookie management
+export type Cookies = {
+  set: (
+    key: string,
+    value: string,
+    options: {
+      secure?: boolean;
+      httpOnly?: boolean;
+      sameSite?: "strict" | "lax";
+      expires?: number;
+    },
+  ) => void;
+  get: (key: string) => { name: string; value: string } | undefined;
+  delete: (key: string) => void;
+};
+```
+
+### Storing the Session
+
+We need to define the session schema and expiration rules. Redis stores data as strings, so we must serialize our user object before saving it. In the function declaration for `createUserSession`, you can see I use `cookies: Pick<Cookies, "set">` instead of just `cookies: Cookies` . This is just a better developer experience , especially when it comes to later down the line, and if you need to write test cases for every function. By using `cookies: Pick<Cookies, "set">`, you only need to test for the set method. If you use the general `Cookies` type, you would have to write dummy code to test the other `get` and `delete` method which is not required in this function.
+
+```ts title="session.ts"
+const SESSION_EXPIRATION_SECONDS = 60 * 60 * 24 * 7;
+const COOKIE_SESSION_KEY = "session_id";
+
+const sessionSchema = z.object({
+  id: z.string(),
+  role: z.enum(userRoles),
+});
+
+type UserSession = z.infer<typeof sessionSchema>;
+
+export async function createUserSession(user: UserSession, cookies: Pick<Cookies, "set">,) {
+  // 1. Generate a random unique Session ID
+  const sessionId = crypto.randomBytes(64).toString("hex").normalize();
+  // 2. Serialize user data for Redis
+  const sessionData = JSON.stringify(sessionSchema.parse(user));
+  // 3. Store in Redis: Key, Value, "EX" (Expiry Flag), Seconds
+  await redis.set(
+    `session:${sessionId}`,
+    sessionData,
+    "EX",
+    SESSION_EXPIRATION_SECONDS,
+  );
+  // 4. Send the Session ID to the browser via Cookie
+  cookies.set(COOKIE_SESSION_KEY, sessionId, {
+    secure: true,
+    httpOnly: true,
+    sameSite: "lax",
+    expires: Date.now() + SESSION_EXPIRATION_SECONDS * 1000,
+  });
+}
+```
+
+### Verification
+
+Once the sign-up flow is triggered, we can verify the data persistence in two places.
+
+**1. Browser Storage:**
+Inspect the browser's DevTools (Application > Cookies). You should see a `session_id` cookie with `HttpOnly` and `Secure` flags checked.
+
+**2. Redis (via Docker CLI):**
+We can inspect the Redis container directly to confirm the session exists.
+
+```bash
+# Enter the Redis container
+docker exec -it next-auth-redis redis-cli
+
+# List all keys
+127.0.0.1:6379> KEYS *
+1) "session:c324a9..."
+
+# Read the session data
+127.0.0.1:6379> GET "session:c324a9..."
+"{\"id\":\"...\",\"role\":\"user\"}"
+
+# Check time-to-live (seconds remaining)
+127.0.0.1:6379> TTL "session:c324a9..."
+(integer) 604780
+```
+
+### Sign In Logic
+
+The sign-in process mirrors sign-up, but with one critical addition: password verification.
+We cannot simply compare strings using `===`. If we did, an attacker could measure how long the server takes to reject a password and deduce how many characters they guessed correctly. To prevent these **timing attacks**, we use `crypto.timingSafeEqual`.
+
+```ts title="passwordHasher.ts"
+export async function comparePasswords({
+  password,
+  salt,
+  hashedPassword,
+}: {
+  password: string;
+  salt: string;
+  hashedPassword: string;
+}) {
+  const inputHashedPassword = await hashPassword(password, salt);
+
+  return crypto.timingSafeEqual(
+    // Both buffers must be of equal length, or this function throws an error.
+    // Since we enforced a keylen of 64 in scrypt, this is safe.
+    Buffer.from(inputHashedPassword, "hex"),
+    Buffer.from(hashedPassword, "hex"),
+  );
+}
+```
+The server action is straightforward: **Validate Input -> Fetch User -> Verify Password -> Create Session.**
+
+```ts title="actions.ts"
+export async function signIn(unsafeData: z.infer<typeof signInSchema>) {
+  const { success, data } = signInSchema.safeParse(unsafeData);
+
+  if (!success) return "Unable to log you in";
+  // Fetch only necessary columns
+  const user = await db.query.UserTable.findFirst({
+    columns: { password: true, salt: true, id: true, email: true, role: true },
+    where: eq(UserTable.email, data.email),
+  });
+
+  if (user == null || user.password == null || user.salt == null) {
+    return "Unable to log you in";
+  }
+
+  const isCorrectPassword = await comparePasswords({
+    hashedPassword: user.password,
+    password: data.password,
+    salt: user.salt,
+  });
+
+  if (!isCorrectPassword) {
+    return "Unable to log you in";
+  }
+
+  await createUserSession(user, await cookies());
+
+  redirect("/");
+}
+```
+
+### Session Retrieval & Removal
+
+We need two utility functions to handle the session lifecycle. One to log out—removing the session—and one to fetch the current user.
+
+I've introduced a constant `COOKIE_SESSION_KEY` — set to `"session_id"` to avoid "magic strings" scattered across the codebase.
+
+```ts title="session.ts"
+
+const COOKIE_SESSION_KEY = "session_id";
+
+export async function removeUserFromSession(
+  cookies: Pick<Cookies, "get" | "delete">,
+) {
+  const sessionId = cookies.get(COOKIE_SESSION_KEY)?.value;
+
+  if (sessionId == null) return null;
+
+  await redis.del(`session:${sessionId}`);
+  cookies.delete(COOKIE_SESSION_KEY);
+}
+
+export async function getUserFromSession(cookies: Pick<Cookies, "get">) {
+  const sessionId = cookies.get(COOKIE_SESSION_KEY)?.value;
+
+  if (sessionId == null) return null;
+
+  return getUserFromSessionById(sessionId);
+}
+
+// Fetch data from Redis
+async function getUserFromSessionById(sessionId: string) {
+  const rawUserJSON = await redis.get(`session:${sessionId}`);
+
+  if (!rawUserJSON) return null;
+
+  const rawUser = JSON.parse(rawUserJSON);
+
+  const { success, data: user } = sessionSchema.safeParse(rawUser);
+
+  return success ? user : null;
+}
+
+```
+
+**Why split `getUserFromSession` and `getUserFromSessionById`?**
+
+At first glance, this looks redundant. However, this separates the **Transport Layer** from the **Service Layer**.
+* `getUserFromSession`: Knows about **Cookies** — the transport layer. It extracts the ID.
+* `getUserFromSessionById`: Knows about **Redis** — the data source. It fetches the user.
+
+If we later expand to a mobile app that uses `Bearer Tokens` instead of cookies, we can simply write a `getUserFromAuthHeader()` function that reuses `getUserFromSessionById()` without duplicating the Redis logic.
+
+### Optimization: Request Memoization
+
+In Next.js, it is common to need user data in multiple places during a single request, such as the Layout, the Navbar, and the Page itself. Without caching, we would hit Redis three times for the same data.
+
+We can use the React `cache` function to implement **Request Memoization**. This ensures that `getUserFromSession` is called only once per request, and the result is shared across components.
+
+```ts title="currentUser.ts"
+
+import { cookies } from "next/headers";
+import { cache } from "react";
+import { getUserFromSession } from "../core/session";
+
+// This function can be called multiple times in one request
+// but will only execute the logic once.
+export const getCurrentUser = cache(async () => {
+  return await getUserFromSession(await cookies());
+});
+
+```
+
+Now, checking the user in the UI is clean and efficient:
+
+```tsx
+export default async function Home() {
+  const user = await getCurrentUser();
+  return (
+    <div className="container mx-auto p-4">
+      {user == null ? (
+        // sign in and sign up buttons
+      ):(
+        <p>Welcome {user.name}</p>
+      )}
+```
+
+<DeepDive title="Overloading TypeScript">
+
+The tutorial takes `getCurrentUser` a step further by refactoring it into a highly robust, overloaded function. This level of complexity is typically reserved for library maintainers rather than application developers, but it offers a fascinating look at advanced TypeScript patterns.
+
+In a standard implementation, we are forced to handle `null` checks every time we call the function:
+
+```ts
+// current-user.ts
+export const getCurrentUser = cache(async () => {
+  return await getUserFromSession(await cookies());
+});
+// Return Type is: Promise<User | null>
+
+// page.tsx
+const user = await getCurrentUser();
+if (!user) redirect("/sign-in"); // need to write this manually everytime we use the function.
+
+```
+
+While explicit checks are often good, they can become tedious. We can use TypeScript function overloads to bake this logic directly into the function signature, allowing us to request a user and *guarantee* a non-null return type if we enable the redirect option.
+
+**The Building Blocks: Utility Types**
+
+Before writing the function, we need to let TypeScript infer our return types automatically. This saves us from manually updating interfaces if we add a `phoneNumber` column to the database later.
+
+We use three utility helpers:
+1. `ReturnType<T>`: Extracts the return type of a function.
+2. `Awaited<T>`: Unwraps a Promise — turning `Promise<User>` into `User`.
+3. `Exclude<T, U>`: Removes specific types like `null` or `undefined` from a union.
+
+```ts
+// 1. The Full User (from Database)
+type FullUser = Exclude<
+  Awaited<ReturnType<typeof getUserFromDb>>,
+  undefined | null
+>;
+
+// 2. The Session User (from Redis)
+type User = Exclude<
+  Awaited<ReturnType<typeof getUserFromSession>>,
+  undefined | null
+>;
+```
+
+We exclude both `undefined` and `null` because different libraries behave inconsistently. Drizzle might return `undefined` while another tool returns `null`. Excluding both costs us nothing and ensures safety.
+
+**The Implementation Logic**
+
+We want to control two behaviors:
+
+1. **Redirect:** Should the function automatically redirect if no user is found?
+2. **Data Depth:** Do we need the full database record or just the lightweight session data?
+
+This creates four possible combinations. We must define an overload signature for each one to guide the TypeScript compiler.
+
+```ts
+
+// Get full user details, redirect if missing
+function _getCurrentUser(options: {
+  withFullUser: true;
+  redirectIfNotFound: true;
+}): Promise<FullUser>;
+
+// Get full user details, return null if missing
+function _getCurrentUser(options: {
+  withFullUser: true;
+  redirectIfNotFound?: false;
+}): Promise<FullUser | null>;
+
+// Get session data, redirect if missing
+function _getCurrentUser(options: {
+  withFullUser?: false;
+  redirectIfNotFound: true;
+}): Promise<User>;
+
+// Get basic session user, return null if missing (Default)
+function _getCurrentUser(options?: {
+  withFullUser?: false;
+  redirectIfNotFound?: false;
+}): Promise<User | null>;
+
+```
+
+**The "Options Object" Pattern**
+
+The implementation function handles the actual logic. There is a specific syntax trick here used to handle default arguments safely.
+
+```ts
+async function _getCurrentUser({
+  withFullUser = false,
+  redirectIfNotFound = false,
+} = {}) { ... }
+```
+
+The `= {}` at the end is crucial.
+* If we call `await getCurrentUser()`, the argument is `undefined`.
+* We cannot destructure properties from `undefined`.
+* The `= {}` tells JavaScript: "If the argument is undefined, use an empty object instead."
+* Then, the inner defaults (`withFullUser = false`) take over.
+
+**The Complete Solution**
+
+Here is the final code which combines the Types, the Overloads, the Logic, and the Cache.
+
+```ts title="current-user.ts"
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
+import { cache } from "react";
+
+import { eq } from "drizzle-orm";
+
+import { db } from "@/drizzle/db";
+import { UserTable } from "@/drizzle/schema";
+import { getUserFromSession } from "../core/session";
+
+// --- Type Definitions ---
+
+type FullUser = Exclude<
+  Awaited<ReturnType<typeof getUserFromDb>>,
+  undefined | null
+>;
+
+type User = Exclude<
+  Awaited<ReturnType<typeof getUserFromSession>>,
+  undefined | null
+>;
+
+// --- Function Overloads ---
+
+function _getCurrentUser(options: {
+  withFullUser: true;
+  redirectIfNotFound: true;
+}): Promise<FullUser>;
+
+function _getCurrentUser(options: {
+  withFullUser: true;
+  redirectIfNotFound?: false;
+}): Promise<FullUser | null>;
+
+function _getCurrentUser(options: {
+  withFullUser?: false;
+  redirectIfNotFound: true;
+}): Promise<User>;
+
+function _getCurrentUser(options?: {
+  withFullUser?: false;
+  redirectIfNotFound?: false;
+}): Promise<User | null>;
+
+// --- Implementation ---
+
+async function _getCurrentUser({
+  withFullUser = false,
+  redirectIfNotFound = false,
+} = {}) {
+  // Fetch from session (Redis)
+  const user = await getUserFromSession(await cookies());
+
+  if (user == null) {
+    if (redirectIfNotFound) return redirect("/sign-in");
+    return null;
+  }
+
+  // Fetch from DB (Postgres) if requested
+  if (withFullUser) {
+    const fullUser = await getUserFromDb(user.id);
+
+    // Safety Check: Session exists but DB record is gone
+    if (fullUser == null) throw new Error("User not found in database");
+    return fullUser;
+  }
+
+  return user;
+}
+
+// --- Export and Cache
+
+// We export the cached version, the underscore version remains internal.
+export const getCurrentUser = cache(_getCurrentUser);
+
+// Helper for DB access
+async function getUserFromDb(id: string) {
+  return await db.query.UserTable.findFirst({
+    columns: { id: true, email: true, role: true, name: true },
+    where: eq(UserTable.id, id),
+  });
+}
+
+```
+
+Now we can use the function flexibly in our pages without repetitive null checks or manual redirects.
+
+```ts
+// Returns 'User | null'
+const user = await getCurrentUser();
+
+// Returns 'FullUser', automatically redirects if null
+const fullUser = await getCurrentUser({
+  withFullUser: true,
+  redirectIfNotFound: true
+});
+```
+
+</DeepDive>
+
+## Proxy — The New Middleware
+
+In Next.js 16, the file convention <File>middleware.ts</File>  was renamed to <File>proxy.ts</File>. This change isn't just cosmetic; it clarifies that this file acts as a network proxy that intercepts requests before they reach your React components.
+
+Our goal is to protect two route groups:
+1. `<Url>/private</Url>`: Accessible only by signed-in users. Redirects anonymous users to Sign In.
+2. `<Url>/admin</Url>`: Accessible only by users with the `admin` role. Redirects non-admins to Home.
+
+We *could* enforce this at the page level:
+
+```ts title="private/page.ts"
+export default async function PrivatePage() {
+  // This works, but we have to repeat it on every private page
+  const user = await getCurrentUser({ redirectIfNotFound: true });
+}
+```
+
+However, handling this in the Proxy is more secure and scalable because it prevents the route from even rendering.
+
+### Testing: The Role Toggler
+
+Before writing the proxy logic, we need a way to test our permissions. Since we can't easily edit the database manually every time, let's build a quick helper to toggle our role between "user" and "admin.".
+
+```ts title="toggle-role.ts"
+export async function toggleRole() {
+  const user = await getCurrentUser({ redirectIfNotFound: true });
+
+  const [updatedUser] = await db
+    .update(UserTable)
+    .set({ role: user.role === "admin" ? "user" : "admin" })
+    .where(eq(UserTable.id, user.id))
+    .returning({ id: UserTable.id, role: UserTable.role });
+
+  // Important: We must update the session data in Redis too
+  await updateUserSessionData(updatedUser, await cookies());
+
+  revalidatePath("/private");
+}
+```
+
+```tsx title="private/page.tsx"
+import { toggleRole } from "@/lib/toggle-role";
+export default async function PrivatePage() {
+  const user = await getCurrentUser({ redirectIfNotFound: true });
+
+  return (
+    <div className="container mx-auto p-4">
+      <h1 className="text-4xl mb-8">Private: {user.role} </h1>
+      <div className="flex gap-2">
+      <form action={toggleRole}>
+            <Button>Toggle Role</Button>
+        </form>
+        <Button asChild>
+          <Link href="/">Home</Link>
+        </Button>
+      </div>
+    </div>
+  );
+}
+```
+
+### Implementing the Proxy
+
+Create the `proxy.ts` file in your root directory.
+
+```ts title="proxy.ts"
+import { NextRequest, NextResponse } from "next/server";
+import {
+  getUserFromSession,
+  updateUserSessionExpiration,
+} from "./auth/core/session";
+
+const privateRoute = ["/private"];
+const adminRoute = ["/admin"];
+
+export async function proxy(request: NextRequest) {
+  // Initialize the default response
+  const response = NextResponse.next();
+
+  let sessionChecked = false;
+  let user = null;
+
+  // Check which route we are on
+  const pathname = request.nextUrl.pathname;
+  const isPrivateRoute = privateRoute.some((route) =>
+    pathname.startsWith(route),
+  );
+  const isAdminRoute = adminRoute.some((route) => pathname.startsWith(route));
+
+  // Authorization Logic
+  if (isPrivateRoute || isAdminRoute) {
+    try {
+      user = await getUserFromSession(request.cookies);
+      sessionChecked = true;
+    } catch (error) {
+      console.log("Middleware: Error fetching user session", error);
+      return NextResponse.redirect(
+        new URL("/sign-in?error=session_error", request.url),
+      );
+    }
+    // Redirect if not logged in
+    if (user == null) {
+      const redirectUrl = new URL("/sign-in", request.url);
+      return NextResponse.redirect(redirectUrl);
+    }
+    // Redirect if logged in but insufficient permissions
+    if (isAdminRoute && user.role !== "admin") {
+      return NextResponse.redirect(new URL("/", request.url));
+    }
+  }
+
+  // Session Extension (Sliding Window)
+  // Instead of logging users out exactly 7 days after login,
+  // we extend their session by 7 days every time they are active.
+  if (sessionChecked && user !== null) {
+    try {
+      await updateUserSessionExpiration({
+        set: (key, value, options) => {
+          response.cookies.set({ ...options, name: key, value });
+        },
+        get: (key) => request.cookies.get(key),
+        delete: (key) => response.cookies.delete(key),
+      });
+    } catch (error) {
+      console.log("Middleware: Error updating session expiration", error);
+    }
+  }
+
+  return response;
+}
+
+export const config = {
+  matcher: [
+    // Skip Next.js internals and all static files, unless found in search params
+    "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
+    // Always run for API routes
+    "/(api|trpc)(.*)",
+  ],
+};
+
+```
+
+I optimized the logic flow slightly compared to the tutorial. Instead of checking routes sequentially, I determine the route type first. This prevents double-checking the session if a route happens to be both private and admin-protected in the future.
+
+### Sliding Window Session
+
+The "Sliding Window" pattern keeps users logged in as long as they are active. To implement this, we need a helper function that updates the expiration time in both Redis and the browser cookie.
+
+```ts title="session.ts"
+function setCookie(sessionId: string, cookies: Pick<Cookies, "set">) {
+  cookies.set(COOKIE_SESSION_KEY, sessionId, {
+    secure: true,
+    httpOnly: true,
+    sameSite: "lax",
+    expires: Date.now() + SESSION_EXPIRATION_SECONDS * 1000,
+  });
+}
+
+export async function updateUserSessionExpiration(cookies: Cookies) {
+  // Get session ID from cookies
+  const sessionId = cookies.get(COOKIE_SESSION_KEY)?.value;
+  if (sessionId == null) return null;
+
+  // Extend Redis Expiration
+  const result = await redis.expire(
+    `session:${sessionId}`,
+    SESSION_EXPIRATION_SECONDS,
+  );
+  if (result === 0) {
+    // Session didn't exist in Redis, maybe expired between requests
+    console.log("session id not found");
+    // Should treat it as logged out, and delete the cookies
+    cookies.delete(COOKIE_SESSION_KEY);
+    return null;
+  }
+  // Extend Cookie Expiration
+  setCookie(sessionId, cookies);
+}
+
+```
+
+The adapter pattern in the `proxy.ts` file is particularly interesting here.
+
+We are in a unique position where we read from the *Request* — incoming from browser but must write to the *Response* — outgoing to browser. Standard cookie libraries usually assume you are working with one or the other. By creating this adapter on the fly, we bridge the gap:
+
+```ts title="proxy.ts"
+await updateUserSessionExpiration({
+  set: (key, value, options) => {
+    response.cookies.set({ ...options, name: key, value });
+  },
+  get: (key) => request.cookies.get(key),
+  delete: (key) => response.cookies.delete(key),
+});
+```
+
+//http://localhost:3000/api/oauth/discord?code=oiE2WskI2cubRbCUi7FY2soN1TuCMQ
+
+
+## OAuth 2.0 Implementation
+
+Authenticating with third-party providers like Google or Discord requires a shift in our database strategy. Since users logging in via OAuth won't have a password or a salt, we must first update our schema to make these fields nullable. We also need a new table to link these external identities to our internal user records.
+
+### Database Schema Updates
+
+We update the `users` table and create a new `user_oauth_accounts` table. This allows a single user to potentially link multiple providers to one account in the future.
+
+```ts title="schema.ts"
+export const UserTable = pgTable("users", {
+  id: uuid().primaryKey().defaultRandom(),
+  name: text().notNull(),
+  email: text().notNull().unique(),
+  password: text(),
+  salt: text(),
+  role: userRoleEnum().notNull().default("user"),
+  createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp({ withTimezone: true })
+    .notNull()
+    .defaultNow()
+    .$onUpdate(() => new Date()),
+});
+
+export const userRelations = relations(UserTable, ({ many }) => ({
+  oAuthAccounts: many(UserOAuthAccountTable),
+}));
+
+export const oAuthProviders = ["discord", "github", "google"] as const;
+export type OAuthProvider = (typeof oAuthProviders)[number];
+export const oAuthProviderEnum = pgEnum("oauth_provides", oAuthProviders);
+
+export const UserOAuthAccountTable = pgTable(
+  "user_oauth_accounts",
+  {
+    userId: uuid()
+      .notNull()
+      .references(() => UserTable.id, { onDelete: "cascade" }),
+    provider: oAuthProviderEnum().notNull(),
+    providerAccountId: text().notNull().unique(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp({ withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [primaryKey({ columns: [t.providerAccountId, t.provider] })],
+);
+
+export const userOauthAccountRelationships = relations(
+  UserOAuthAccountTable,
+  ({ one }) => ({
+    user: one(UserTable, {
+      fields: [UserOAuthAccountTable.userId],
+      references: [UserTable.id],
+    }),
+  }),
+);
+
+```
+
+After running the migration, we need to register our application with the OAuth providers. The setup varies slightly per provider, but the core requirement is identical: we get a **Client ID** and a **Client Secret**, and we must provide a **Redirect URL**.
+
+For this project, I am standardizing the redirect URL structure to `<Url>/api/oauth/[provider]/route.ts</Url>`.
+
+### The Architecture: Class-Based Clients
+
+Most modern React development relies on functional components. However, OAuth clients are a textbook use case for **Object-Oriented Programming**.
+
+We are essentially building a blueprint. Whether we use Discord, Google, or GitHub, the flow is the same:
+
+1. Generate an authorization URL.
+2. Exchange the code for a token.
+3. Fetch user details.
+
+Using a class allows us to define this logic once and instantiate it with different configurations for each provider. If we used functional components here, we would end up with a messy web of switch statements handling configuration secrets and URLs.
+
+```ts title="base.ts"
+
+export class OAuthClient<T> {
+  createAuthUrl(cookies: Pick<Cookies, "set">) {
+    const codeVerifier = createCodeVerifier(cookies);
+    const state = createState(cookies);
+    const url = new URL("https://discord.com/oauth2/authorize");
+    url.searchParams.set("client_id", env.DISCORD_CLIENT_ID);
+    url.searchParams.set("redirect_uri", this.redirectUrl.toString());
+    url.searchParams.set("response_type", "code");
+    url.searchParams.set("scope", "identify email");
+    url.searchParams.set("state", state);
+    url.searchParams.set("code_challenge_method", "S256");
+    url.searchParams.set(
+      "code_challenge",
+      crypto.hash("sha256", codeVerifier, "base64url"),
+    );
+    return url.toString();
+  }
+}
+
+```
+The `createAuthUrl` method constructs the link that sends the user to the provider's consent page. Note the `state` and `code_challenge` parameters—these are critical security measures we will discuss in the Deep Dive section.
+
+### Handling the Callback
+
+Once the user approves the login, the provider redirects them back to our application at `<Url>/api/oauth/[provider]</Url>` with a `code`. We need a route handler to intercept this, validate it, and create the user session.
+
+```ts title="route.ts"
+export async function GET(
+  request: NextRequest,
+  { params }: { params: Promise<{ provider: string }> },
+) {
+  const { provider: rawProvider } = await params;
+  const code = request.nextUrl.searchParams.get("code");
+  const state = request.nextUrl.searchParams.get("state");
+  const provider = z.enum(oAuthProviders).parse(rawProvider);
+
+  if (typeof code !== "string" || typeof state !== "string") {
+    redirect(
+      `/sign-in?oAuthError=${encodeURIComponent("Failed to connect, please try again.")}`,
+    );
+  }
+
+  try {
+    const oAuthUser = await new OAuthClient().fetchUser(
+      code,
+      state,
+      await cookies(),
+    );
+    const user = await connectUserToAccount(oAuthUser, provider);
+    await createUserSession(user, await cookies());
+  } catch (error) {
+    console.error(error);
+    redirect(
+      `/sign-in?oAuthError=${encodeURIComponent("Failed to connect, please try again.")}`,
+    );
+  }
+
+  redirect("/");
+}
+
+function connectUserToAccount(
+  { id, email, name }: { id: string; email: string; name: string },
+  provider: OAuthProvider,
+) {
+  return db.transaction(async (trx) => {
+    let user = await trx.query.UserTable.findFirst({
+      where: eq(UserTable.email, email),
+      columns: { id: true, role: true },
+    });
+
+    if (user == null) {
+      const [newUser] = await trx
+        .insert(UserTable)
+        .values({
+          email: email,
+          name: name,
+        })
+        .returning({ id: UserTable.id, role: UserTable.role });
+      user = newUser;
+    }
+
+    await trx
+      .insert(UserOAuthAccountTable)
+      .values({
+        provider,
+        providerAccountId: id,
+        userId: user.id,
+      })
+      .onConflictDoNothing();
+    return user;
+  });
+}
+```
+
+This route relies on a database transaction helper `connectUserToAccount`. This ensures we don't end up with "half-created" users. It checks if the email exists, creates the user if needed, and then links the OAuth provider record.
+
+### Fetching the Token and User
+
+Back in our `OAuthClient` class, we implement the exchange logic. This involves two steps. First, we POST the authorization code to the provider to get an access token. Second, we use that token to GET the user's profile.
+
+```ts title="base.ts"
+
+async fetchUser(code: string, state: string, cookies: Pick<Cookies, "get">) {
+    const isValidState = await validateState(state, cookies);
+    if (!isValidState) throw new InvalidStateError();
+    const { accessToken, tokenType } = await this.fetchToken(
+      code,
+      getCodeVerifier(cookies),
+    );
+
+    const user = await fetch("https://discord.com/api/users/@me", {
+      headers: {
+        Authorization: `${tokenType} ${accessToken}`,
+      },
+    })
+      .then((res) => res.json())
+      .then((rawData) => {
+        const { data, success, error } = this.userSchema.safeParse(rawData);
+        if (!success) throw new InvalidUserError(error);
+
+        return data;
+      });
+
+    return {
+      id: user.id,
+      email: user.email,
+      name: user.username ?? user.global_name,
+    };
+  }
+
+  private fetchToken(code: string, codeVerifier: string) {
+    return fetch("https://discord.com/api/oauth2/token", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Accept: "application/json",
+      },
+      body: new URLSearchParams({
+        code,
+        redirect_uri: this.redirectUrl.toString(),
+        grant_type: "authorization_code",
+        client_id: env.DISCORD_CLIENT_ID,
+        client_secret: env.DISCORD_CLIENT_SECRET,
+        codeVerifier: codeVerifier,
+      }),
+    })
+      .then((res) => res.json())
+      .then((rawData) => {
+        const { data, success, error } = this.tokenSchema.safeParse(rawData);
+        if (!success) throw new InvalidTokenError(error);
+
+        return {
+          accessToken: data.access_token,
+          tokenType: data.token_type,
+        };
+      });
+  }
+}
+
+```
+
+### Understanding the Token Exchange
+
+The `fetchToken` function is where we adhere to the strict OAuth 2.0 standard.
+
+We must set the content type to `application/x-www-form-urlencoded` rather than JSON. This is a requirement of the OAuth specification. We also explicitly define the `grant_type` as `authorization_code`. This tells the provider that we are exchanging a temporary code for a long-lived token.
+
+Once we have the token, we proceed to `fetchUser`. The URL `<Url>https://discord.com/api/users/@me</Url>` is specific to Discord. If we were implementing GitHub or Google, we would need to swap this for their respective user profile endpoints. We pass the access token in the `Authorization` header, allowing the provider to verify our identity and return the user's data.
+
+### Atomic Database Operations
+
+Back in `<File>route.ts</File>`, we receive the user data and pass it to `connectUserToAccount`.
+
+This function wraps our database logic in a **Transaction**. This is critical for data integrity. We need to perform two distinct writes: creating the `User` record and creating the `UserOAuthAccount` link. If the server crashed halfway through—creating the user but failing to link the provider—we would have an orphaned account that the user could never access again.
+
+The transaction ensures **Atomicity**: either both operations succeed together, or the entire attempt fails and rolls back, leaving the database clean.
+
+Once the user is persisted, we create a session just as we did in the standard email/password flow. This completes the cycle, logging the user in successfully.
+
+<DeepDive title="OAuth Security: The 'Why' and 'How'">
+
+We rely on two critical parameters—`state` and `code_verifier`—to secure the OAuth flow. Let's break down the exact attacks they prevent.
+
+**1. State — Preventing Login CSRF**
+
+Without a `state` parameter, the flow is vulnerable to a "Login CSRF" attack.
+
+**The Attack Scenario:**
+1. A hacker logs into the application using their *own* Discord account.
+2. They proceed until they reach the Discord consent screen.
+3. They capture the callback URL generated by Discord, such as `<Url>/api/oauth/discord?code=hack-123</Url>`, but **stop** the process there. They do not visit the link themselves.
+4. They trick a victim into clicking this link via a phishing email or malicious site.
+5. The victim's browser visits the link. The application sees a valid code (`hack-123`) and logs the victim in... **as the hacker**.
+6. The victim, thinking they are logged into their own empty account, might enter sensitive data like a credit card number, which is now saved to the hacker's account.
+
+**The Fix:**
+
+We generate a random `state` string and store it in the user's **browser cookie**—specifically an HttpOnly cookie—before they leave our site. We also send this string to Discord.
+
+When Discord redirects the user back, they must bring that same `state` string in the URL. We compare the URL state to the Cookie state.
+
+In the attack scenario, the hacker cannot inject the `hack-state-123` cookie into the victim's browser. So when the victim clicks the link, the application sees a state in the URL but **no matching state in the cookie**, and the request is rejected.
+
+```ts title="base.ts"
+export function createState(cookies: Pick<Cookies, "set">) {
+  const state = crypto.randomBytes(64).toString("hex").normalize();
+  cookies.set("oauth_state", state, {
+    secure: true,
+    httpOnly: true,
+    sameSite: "lax",
+    expires: Date.now() + 600 * 1000, // 10 minutes
+  });
+  return state;
+}
+
+function validateState(state: string, cookies: Pick<Cookies, "get">) {
+  const cookieState = cookies.get(STATE_COOKIE_KEY)?.value;
+
+  return cookieState === state;
+}
+```
+
+**2. PKCE (Preventing Code Interception)**
+
+While `state` proves *who* initiated the flow, PKCE — Proof Key for Code Exchange ensures the *authorization code* hasn't been stolen in transit.
+
+**The Attack Scenario:**
+
+This is common in mobile apps or public WiFi networks. A hacker uses a malicious browser extension or network sniffer to intercept the redirect URL as it comes back from Discord. They now have the authorization code. Without PKCE, they could send this code to Discord and get the access token, gaining full control of the account.
+
+**The Fix:**
+
+We create a secret password called the **Code Verifier** on the fly.
+
+1. **Start:** We generate the `code_verifier` and store it in an HttpOnly cookie.
+2. **Hash:** We hash it using `SHA256` to create a `code_challenge`.
+3. **Send:** We send the *challenge* to Discord in the authorization URL. Discord saves this hash.
+4. **Exchange:** When we return to swap the code for the token, we send the original **un-hashed** `code_verifier`.
+5. **Verify:** Discord hashes the verifier we just sent and checks if it matches the challenge from step 3.
+
+If a hacker steals the authorization code, they still fail. They cannot call the token endpoint because they don't have the `code_verifier` — it's safely inside the HttpOnly cookie, and they cannot reverse-engineer it from the `code_challenge` because hashing is one-way.
+
+```ts title="base.ts"
+
+const STATE_COOKIE_KEY = "oAuthState";
+export class OAuthClient<T> {
+  createAuthUrl(cookies: Pick<Cookies, "set">) {
+    const codeVerifier = createCodeVerifier(cookies);
+    url.searchParams.set("code_challenge_method", "S256");
+    url.searchParams.set(
+      "code_challenge",
+      crypto.hash("sha256", codeVerifier, "base64url"),
+    );
+    // other config
+  }
+
+
+async fetchUser(code: string, state: string, cookies: Pick<Cookies, "get">) {
+  const { accessToken, tokenType } = await this.fetchToken(
+      code,
+      getCodeVerifier(cookies),
+    );
+}
+
+private fetchToken(code: string, codeVerifier: string) {
+    return fetch("https://discord.com/api/oauth2/token", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Accept: "application/json",
+      },
+      body: new URLSearchParams({
+        code,
+        redirect_uri: this.redirectUrl.toString(),
+        grant_type: "authorization_code",
+        client_id: env.DISCORD_CLIENT_ID,
+        client_secret: env.DISCORD_CLIENT_SECRET,
+        codeVerifier: codeVerifier,
+      }),
+    })
+      .then((res) => res.json())
+      .then((rawData) => {
+        const { data, success, error } = this.tokenSchema.safeParse(rawData);
+        if (!success) throw new InvalidTokenError(error);
+
+        return {
+          accessToken: data.access_token,
+          tokenType: data.token_type,
+        };
+      });
+  }
+}
+function createCodeVerifier(cookies: Pick<Cookies, "set">) {
+  const codeVerifier = crypto.randomBytes(64).toString("hex").normalize();
+  cookies.set(CODE_VERIFIER_COOKIE_KEY, codeVerifier, {
+    secure: true,
+    httpOnly: true,
+    sameSite: "lax",
+    expires: Date.now() + COOKIE_EXPIRATION_SECONDS * 1000,
+  });
+
+  return codeVerifier;
+}
+
+function getCodeVerifier(cookies: Pick<Cookies, "get">) {
+  const codeVerifier = cookies.get(CODE_VERIFIER_COOKIE_KEY)?.value;
+  if (codeVerifier == null) throw new InvalidCodeVerifierError();
+  return codeVerifier;
+}
+
+```
+
+This ensures that the entity exchanging the code — our server is the same entity that initiated the request.
+
+</DeepDive>

@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Geist_Mono, Space_Grotesk } from "next/font/google";
+import { Geist_Mono, JetBrains_Mono, Space_Grotesk } from "next/font/google";
 
 import Header from "@/components/header";
 import { Providers } from "@/components/providers";
@@ -13,6 +13,11 @@ const spaceGrotesk = Space_Grotesk({
 
 const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
+  subsets: ["latin"],
+});
+
+const jetBrainsMono = JetBrains_Mono({
+  variable: "--font-jetbrains-mono",
   subsets: ["latin"],
 });
 
@@ -33,7 +38,7 @@ export default function RootLayout({
       className="scroll-p-20 scroll-smooth"
     >
       <body
-        className={`${spaceGrotesk.className} ${geistMono.variable} ${spaceGrotesk.variable} antialiased`}
+        className={`${spaceGrotesk.className} ${geistMono.variable} ${spaceGrotesk.variable} ${jetBrainsMono.variable} antialiased`}
       >
         <Providers>
           <Header />

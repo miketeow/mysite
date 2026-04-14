@@ -1,0 +1,689 @@
+---
+title: "Next JS Better-Auth Saas"
+publishedAt: "2026-02-23"
+description: "Build authentication in Next JS with better-auth"
+tags: ["nextjs", "auth"]
+repositoryUrl: "https://github.com/miketeow/httpserver"
+techStack: ["NextJS"]
+---
+
+# Introduction
+This post documents my process of building authentication in Next.js using [Better Auth](https://www.better-auth.com/). The goal is to experience a production-ready workflow, since most applications rely on third-party auth rather than building everything from scratch in-house every time. I am following the [Master Senior Level Authentication](https://www.youtube.com/watch?v=WPiqNDapQrk) tutorial but adapting it to my own preferences. This project comes right after my deep dives into a [Go HTTP server](/project/go-http-server.mdx) and [Go Authentication and Authorization](/project/go-authorization-and-authentication.mdx), along with my post on the scratch-built [Next.js Authentication Master Class](https://youtu.be/yoiBv0K6_1U) from the same channel. Throughout this post, I will contrast this Node.js implementation with the Go strategies I used previously. I also want to understand the implicit technical decisions Better Auth makes that I skipped in my own [NextJS Auth Core](/project/nextjs-auth-core.mdx) project.
+
+> I created a basic frontend template in Next.js using TailwindCSS, ShadcnUI, and Drizzle ORM. This post focuses purely on the backend logic, so I won't detail the UI setup.
+
+## Database Index
+
+Right out of the gate, the [Better Auth documentation](https://www.better-auth.com/docs/installation) provides multiple helper CLI commands that can even set up the database schema for us. Following the tutorial steps was straightforward with no major technical hurdles. However, it was a great learning opportunity to observe how the library structures the schema—specifically, choosing which columns to index for better performance. Indexing is something I did not consider extensively when setting up my previous projects from scratch. Looking at the generated migration file, it becomes clear that we should always index columns accessed frequently, such as the user ID across most tables or important values like session tokens. I also learned that Postgres implicitly indexes any column declared as `UNIQUE` or `PRIMARY KEY`.
+
+Looking at the Drizzle schema, we can analyze the line  `(table) => [index("account_userId_idx").on(table.userId)]` to understand the reasoning behind explicit indexing. If you are unfamiliar with Drizzle syntax, we can always inspect the generated migration file to look at the raw SQL directly. The SQL output is much simpler to digest.
+
+```sql title="0000_table.sql"
+CREATE TABLE "account" (
+	"id" text PRIMARY KEY NOT NULL,
+	"account_id" text NOT NULL,
+	"provider_id" text NOT NULL,
+	"user_id" text NOT NULL,
+	"access_token" text,
+	"refresh_token" text,
+	"id_token" text,
+	"access_token_expires_at" timestamp,
+	"refresh_token_expires_at" timestamp,
+	"scope" text,
+	"password" text,
+	"created_at" timestamp DEFAULT now() NOT NULL,
+	"updated_at" timestamp NOT NULL
+);
+
+ALTER TABLE "account" ADD CONSTRAINT "account_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+
+CREATE INDEX "account_userId_idx" ON "account" USING btree ("user_id");--> statement-breakpoint
+```
+
+For this table, Postgres implicitly indexes the primary key `id` already. However, the `user_id` column is declared later as a foreign key linking back to the `user` table.
+
+Imagine a user with the `user_id` of `james-123` signs up using Google OAuth. This creates one row in the `account` table. The same user might return the next day and sign in using a different OAuth provider like GitHub. They remain the exact same user with the `user_id` of `james-123`. This action creates a brand new row in the `account` table with a new unique `id` but the exact same `user_id` of `james-123`.
+
+This scenario explains why we cannot declare the `user_id` column as `UNIQUE`—a single user can absolutely have multiple rows in the `account` table representing different linked providers. When the application needs to fetch all linked accounts for a specific user, an unindexed `user_id` column would force Postgres to perform a slow full-table scan. To prevent that performance bottleneck, we explicitly create an index on the `user_id` column.
+
+## The Hybrid Approach
+
+Another smart thing Better Auth does is cache the session data in the cookie instead of querying the database for every request, even though we set up a session table. This hybrid approach feels very similar to the workflow in my [Go Authentication and Authorization](/project/go-authorization-and-authentication.mdx) project. But instead of juggling access and refresh tokens, we are simply dealing with a single session state.
+
+Better Auth first creates a 30-day session and stores it in the database. Then it signs the session data, places it in a cookie, and sets a very short internal cache validity—typically 5 minutes. For the next 5 minutes, every client request is validated purely via the fast math of a cookie signature with zero database lookups. On minute six, Better Auth sees the cache expire, silently pauses, checks the database to ensure the 30-day session is still valid, signs a new 5-minute cache, and lets the user proceed.
+
+When it comes to revoking access, there are two scenarios. The first is self-revocation. When a user logs out, the server deletes the session in the database and immediately sends back an HTTP response header instructing the browser to clear the cookie. The cache is instantly destroyed, and access is revoked perfectly.
+
+The second scenario is remote revocation. An admin can manually delete the database session row for a malicious user. Although the user's browser still holds a mathematically valid signed cookie, it only lives for a maximum of 5 more minutes—a totally acceptable trade-off for the massive performance gain.
+
+Better Auth handles all this complexity under the hood. From a Next.js frontend perspective, we only need to call `useSession`. The library manages the tokens, catches expirations, and retries requests automatically. As a developer, the only requirement is configuring it properly inside <File>auth.ts</File>.
+
+```ts title="auth.ts"
+import { db } from "@/drizzle/db";
+import { betterAuth } from "better-auth";
+import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { nextCookies } from "better-auth/next-js";
+
+export const auth = betterAuth({
+  emailAndPassword: {
+    enabled: true,
+  },
+  session: {
+    cookieCache: {
+      enabled: true,
+      maxAge: 60 * 5, // 5 minutes
+    },
+  },
+  plugins: [nextCookies()],
+  database: drizzleAdapter(db, {
+    provider: "pg",
+  }),
+});
+
+```
+
+## OAuth Integration
+
+Integrating OAuth providers with Better Auth is very straightforward. First, configure the OAuth application properly in the provider's developer dashboard, such as the [GitHub Developer Portal](https://github.com/settings/developers) or the [Google Cloud Console](https://console.cloud.google.com/apis/dashboard). The [Better Auth Documentation](https://www.better-auth.com/docs/authentication/github) provides a comprehensive guide for this setup.
+
+```ts title="auth.ts"
+socialProviders: {
+    github: {
+      clientId: env.GITHUB_CLIENT_ID,
+      clientSecret: env.GITHUB_CLIENT_SECRET,
+    },
+    google: {
+      clientId: env.GOOGLE_CLIENT_ID,
+      clientSecret: env.GOOGLE_CLIENT_SECRET,
+    },
+  },
+```
+
+Next, set up the appropriate frontend function. The author of the tutorial video created some fancy wrappers to make the social auth buttons support multiple OAuth providers dynamically. You can totally skip all that complexity. Instead, simply implement it using the main `authClient.signIn.social` function and pass the specific provider name like "github" or "google".
+
+```ts
+
+authClient.signIn.social({ provider: "github", callbackURL: "/" });
+
+```
+
+This single line makes the OAuth sign-in work perfectly. There is no need to modify the database schema because the original schema prepared by the Better Auth CLI helper is already designed to accommodate OAuth accounts automatically.
+
+## Email Verification and Password Resets
+
+These two features are essential in modern authentication systems. Unlike the tutorial video, I am not setting up an actual email service like Postmark or Resend here. Most production applications rely on paid services to handle email delivery, ensuring strict compliance and avoiding spam folders. It is unwise for a developer to design an email delivery service from scratch.
+
+For this local project, I will simply use the email integration functions provided by the Better Auth library to intercept the data. Instead of routing the payload to an actual inbox, I will console log the email address and the secure token URL.
+
+To set up both the email verification and reset password features, modify the <File>auth.ts</File> configuration.
+
+```ts title="auth.ts"
+export const auth = betterAuth({
+  emailAndPassword: {
+    enabled: true,
+    requireEmailVerification: true,
+    // 1. Mock Password Reset Email
+    sendResetPassword: async ({ user, url }) => {
+      console.log("--------------------------------");
+      console.log(`[DEV MOCK] Send Password Reset`);
+      console.log(`To: ${user.email}`);
+      console.log(`Link: ${url}`);
+      console.log("--------------------------------");
+    },
+  },
+  emailVerification: {
+    autoSignInAfterVerification: true,
+    sendOnSignUp: true,
+    sendOnSignIn: true,
+    // 2. Mock Verification Email
+    sendVerificationEmail: async ({ user, url }) => {
+      console.log("--------------------------------");
+      console.log(`[DEV MOCK] Send Verification Email`);
+      console.log(`To: ${user.email}`);
+      console.log(`Link: ${url}`);
+      console.log("--------------------------------");
+    },
+  },
+  //...
+}
+```
+
+If you want to implement real email delivery later, simply replace these console log functions with your own `customSendEmail` function and follow the provider's guide.
+
+After applying this setup, Better Auth actively prevents any unverified account from signing in. It checks the verification table in the database under the hood to determine the user's status. During local development, make sure to check your running terminal, find the mock email log, and manually click the verification link to complete the sign-up simulation.
+
+Next, we need a frontend UI prompting users to resend the verification email if they lose it.
+
+When building buttons that trigger emails, it is crucial to implement rate limiting to prevent malicious actors from spamming the endpoint and running up your email provider bill. Fortunately, Better Auth implicitly implements backend rate-limiting behind the `authClient.sendVerificationEmail` function. However, we still need to guard against impatient users mashing the button on the frontend through intentional UI throttling.
+
+The tutorial author attached a basic 30-second countdown timer to the button. When a user first lands on the verification page, the system automatically sends the initial email and disables the resend button for 30 seconds. It works, but the timer is entirely stateless. If an impatient user refreshes the browser with 15 seconds still remaining, the component remounts and resets the countdown back to a full 30 seconds. Instead of a smooth experience, the user is forced to wait even longer. This is a minor UI flaw, but it is definitely worth fixing for a robust user experience.
+
+<DeepDive title="Improved Throttling Timer">
+
+Here is my improved version of the UI throttling timer. Instead of relying on a temporary React state, we store the expiration timestamp in the browser's local storage. Even if the user refreshes the page, the component checks local storage to resume the correct countdown.
+
+I also extracted the logic into a separate hook to keep the email verification component clean and readable.
+
+```ts title="use-countdown.ts"
+
+import { useEffect, useRef, useState } from "react";
+
+export function useCountdown(storageKey: string, initialSeconds: number = 30) {
+  const [timeLeft, setTimeLeft] = useState(0);
+  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // 1. On mount check if a timer is already running in the background
+  useEffect(() => {
+    const storedEndTime = localStorage.getItem(storageKey);
+    if (storedEndTime) {
+      const remaining = Math.round(
+        (parseInt(storedEndTime) - Date.now()) / 1000,
+      );
+
+      if (remaining > 0) {
+        startTimer(remaining);
+      } else {
+        localStorage.removeItem(storageKey);
+      }
+    } else {
+      // If there is no timer in memory, start one automatically
+      startTimer(initialSeconds);
+    }
+  }, [storageKey, initialSeconds]);
+
+  // 2. The function to actually start the ticking
+  const startTimer = (seconds: number) => {
+    // Save the future exact time where the button can be clicked again
+    const endTime = Date.now() + seconds * 1000;
+    localStorage.setItem(storageKey, endTime.toString());
+    setTimeLeft(seconds);
+
+    // Clear any existing intervals just to be safe
+    if (intervalRef.current) clearInterval(intervalRef.current);
+
+    intervalRef.current = setInterval(() => {
+      const remaining = Math.round((endTime - Date.now()) / 1000);
+
+      if (remaining <= 0) {
+        clearInterval(intervalRef.current!);
+        setTimeLeft(0);
+        localStorage.removeItem(storageKey);
+      } else {
+        setTimeLeft(remaining);
+      }
+    }, 1000);
+  };
+
+  return { timeLeft, startTimer };
+}
+
+```
+
+```ts title="email-verification.tsx"
+
+import { Button } from "@/components/ui/button";
+import { useCountdown } from "@/hooks/use-countdown";
+import { authClient } from "@/lib/auth-client";
+
+const EmailVerification = ({ email }: { email: string }) => {
+  const { timeLeft, startTimer } = useCountdown("resend-email-timer");
+
+  const handleResend = async () => {
+    startTimer(30);
+    await authClient.sendVerificationEmail({
+      email,
+      callbackURL: "/",
+    });
+  };
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-muted-foreground mt-2">
+        We sent you a verification link. Please check your email and click the
+        link to verify your account.
+      </p>
+
+      <Button
+        variant="outline"
+        className="w-full"
+        onClick={handleResend}
+        disabled={timeLeft > 0}
+      >
+        {timeLeft > 0 ? `Resend Email (${timeLeft}s)` : `Resend Email`}
+      </Button>
+    </div>
+  );
+};
+
+export default EmailVerification;
+
+```
+
+</DeepDive>
+
+### Architecture Improvement: URL State as the Source of Truth
+
+If you strictly follow the tutorial's frontend code, you might notice a strange bug. Whenever you refresh the login page, it aggressively resets back to the default "Sign In" view. This happens because the original design uses a local React state to toggle between tabs like Sign In, Sign Up, Reset Password, and Email Verification. All these views share the exact same URL path, which is a known architectural anti-pattern.
+
+The standard practice is to make the webpage URL the single source of truth for the user's location. If a user copies a link while looking at the "Forgot Password" tab and pastes it into a new browser, it should open that exact tab. The proper way to achieve this in Next.js is by utilizing URL search parameters.
+
+```ts title="login/page.tsx"
+
+function LoginClient() {
+
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  const selectedTab = (searchParams.get("tab") as Tab) || "signin";
+  const currentEmail = searchParams.get("email") || "";
+
+  const handleTabChange = (newTab: string, userEmail?: string) => {
+    // Clone current params to acoid overwrite unrelated query params
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("tab", newTab);
+    if (userEmail) {
+      params.set("email", userEmail);
+    }
+    // Use router replace so that user's back button don't get broken by tab's click
+    router.replace(`${pathname}?${params.toString()}`);
+  };
+
+  return (
+    <Tabs
+    value={selectedTab}
+    onValueChange={(t) => handleTabChange(t as Tab)}>
+     <SignInTab
+        openEmailVerificationTab={(email) =>
+          handleTabChange("email-verification", email)
+        }
+        openForgotPassword={() => handleTabChange("forgot-password")}
+      />
+  )
+}
+
+// Suspense boundary
+export default function LoginPage() {
+  return (
+    <Suspense
+      fallback={<div className="flex justify-center mt-10">Loading...</div>}
+    >
+      <LoginClient />
+    </Suspense>
+  );
+}
+```
+
+With this new design, data is no longer trapped in volatile component state. Next.js will read a URL like <Url>?tab=email-verification&email=james@test.com</Url> and render the correct UI immediately.
+
+Notice that when we consume the `useSearchParams` hook to make a component dependent on the client's request URL, Next.js requires us to wrap that specific component in a `Suspense` boundary. This is a strict framework rule. Because reading search parameters happens dynamically on the client, failing to wrap the hook in a Suspense boundary forces Next.js to de-optimize the entire route and abandon static rendering at build time. By isolating the dynamic URL reader inside Suspense, the rest of the page layout remains fast and statically optimized. There is no `useState` hook cluttering this component anymore—the render output purely reflects the URL.
+
+## Profile Management
+
+For simple profile management like updating a password or name, just set up a straightforward form and use the `authClient.updateUser` method. Changing an email address is more complex and requires verification, so we need to enable it inside <File>auth.ts</File>. Once again, I will route the mock email to the terminal logs where you can click the link to verify the new address.
+
+```ts title="auth.ts"
+
+export const auth = betterAuth({
+  user: {
+    changeEmail: {
+      enabled: true,
+      sendChangeEmailConfirmation: async ({ user, url, newEmail }) => {
+        console.log("--------------------------------");
+        console.log(`[DEV MOCK] Send New Email Confirmation`);
+        console.log(`To: ${user.email}`);
+        console.log(`Link: ${url}`);
+        console.log(`New Email: ${newEmail}`);
+        console.log("--------------------------------");
+      },
+    },
+  }
+  //...
+})
+
+````
+
+The UI form itself is very similar to the sign-in component. The only complicated part is the update handler function because changing an email requires a completely different method than updating a name.
+
+While reviewing the tutorial, I spent some time trying to understand why the author used `Promise.all` and destructured the results. I realized they were trying to run two promises concurrently—one for updating the user profile and another for changing the email. This approach makes the code unnecessarily complex and introduces a subtle bug. A simpler approach is to run the promises sequentially to avoid a swallowed state situation present in the original code. Before presenting my solution, let us look at the flaw in the author's logic.
+
+```ts title="profile-update-form.tsx"
+
+async function handleProfileUpdate(data: ProfileUpdateForm) {
+  const promises = [
+    authClient.updateUser({
+      name: data.name,
+    }),
+  ];
+
+  if (data.email !== user.email) {
+    promises.push(
+      authClient.changeEmail({
+        newEmail: data.email,
+        callbackURL: "/profile",
+      }),
+    );
+  }
+
+  const res = await Promise.all(promises);
+
+  const updateUserResult = res[0];
+  const emailResult = res[1] ?? { error: false };
+
+  if (updateUserResult.error) {
+    toast.error(updateUserResult.error.message || "Failed to update profile");
+    // The program stops evaluating success messages here, even if the email change succeeded.
+  } else if (emailResult.error) {
+    toast.error(emailResult.error.message || "Failed to change email");
+  } else {
+    if (data.email !== user.email) {
+      toast.success("Verify your new email address to complete the changes");
+    } else {
+      toast.success("Profile updated successfully");
+    }
+  }
+
+  router.refresh();
+}
+
+```
+
+Inside the profile update handler, the author uses multiple conditional statements to handle errors from the concurrent promises. Imagine a scenario where a user tries to update their name and change their email at the exact same time. If the name update fails but the email update succeeds, the success state of the email change gets completely swallowed. The user experiences a confusing UI state—the webpage displays a "Failed to update profile" error, yet a verification email for the new address quietly arrives in their inbox with zero frontend acknowledgement.
+
+This pattern is a fundamental mistake because `Promise.all` should generally be avoided when dealing with side-effect-heavy mutations. It all comes down to whether we are reading or writing data. When fetching from multiple sources concurrently to render a dashboard, `Promise.all` is perfect. But when we execute promises with permanent side effects like updating a database record and triggering an email, we must run them sequentially to handle errors stage by stage.
+
+Here is my improved version that runs the mutations sequentially. I also included a guard clause to check if the profile data was actually modified before making unnecessary database calls.
+
+```ts title="profile-update-form.tsx"
+
+async function handleProfileUpdate(data: ProfileUpdateForm) {
+  if (data.name !== user.name) {
+    const updateRes = await authClient.updateUser({
+      name: data.name,
+    });
+    if (updateRes.error) {
+      return toast.error(
+        updateRes.error.message || "Failed to update profile",
+      );
+    }
+  }
+  if (data.email !== user.email) {
+    const emailRes = await authClient.changeEmail({
+      newEmail: data.email,
+      callbackURL: "/profile",
+    });
+    if (emailRes.error) {
+      return toast.error(emailRes.error.message || "Failed to change email");
+    }
+    return toast.success(
+      "Verify your new email address to complete the changes",
+    );
+  }
+  toast.success("Profile updated successfully");
+  router.refresh();
+}
+````
+
+### Change and Set Password
+
+Handling password updates is straightforward. We simply provide a standard change password form to normal users and a set password form to OAuth users. OAuth users log in without a password by default, meaning the logic to set a new password is fundamentally identical to a standard password reset flow.
+
+````ts title="profile/page.tsx"
+async function SecurityTab({ email }: { email: string }) {
+  const accounts = await auth.api.listUserAccounts({
+    headers: await headers(),
+  });
+  const hasPasswordAccount = accounts.some(
+    (a) => a.providerId === "credential",
+  );
+
+  return (
+    // This is pseudo-code, refer to the repo for the actual implementation
+    <>{hasPasswordAccount ? <ChangePasswordForm /> : <SetPasswordForm />}</>
+  )
+}
+````
+
+Modern applications allow users to log in across multiple devices simultaneously. When a user changes their password, we must provide an option to revoke all other active sessions to ensure account security. Better Auth builds this feature directly into the `changePassword` method—you only need to pass a boolean flag to trigger it.
+
+````ts title="change-password-form.tsx"
+
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1),
+  newPassword: z.string().min(6),
+  revokeOtherSession: z.boolean(),
+});
+
+type ChangePasswordForm = z.infer<typeof changePasswordSchema>;
+
+const ChangePasswordTab = () => {
+  const form = useForm<ChangePasswordForm>({
+    resolver: zodResolver(changePasswordSchema),
+    defaultValues: {
+      currentPassword: "",
+      newPassword: "",
+      revokeOtherSession: true, // Secure default
+    },
+  });
+
+  const { isSubmitting } = form.formState;
+
+  async function handleChangePassword(data: ChangePasswordForm) {
+    await authClient.changePassword(data, {
+      onError: (error) => {
+        toast.error(error.error.message || "Failed to change password");
+      },
+      onSuccess: () => {
+        toast.success("Password changed successfully");
+        form.reset();
+      },
+    });
+  }
+
+  return (
+  <Form>{/* form implementation */}</Form>
+  )
+````
+
+For the set password form targeting OAuth users, we provide a button that triggers a password reset email. This email contains a link that redirects the user to the exact same password reset page used in the standard forgot password flow.
+
+````ts title="set-password-button.tsx"
+
+<Button
+  variant="outline"
+  onClick={() =>
+    authClient.requestPasswordReset({
+      email,
+      redirectTo: "/auth/reset-password",
+      fetchOptions: {
+        onSuccess: () => {
+          toast.success("Password reset email sent");
+        },
+      },
+    })
+  }
+>
+  Sent Password Reset Email
+</Button>
+
+````
+
+When you click the mock link in your terminal during development, notice that the URL contains a secure token like <Url>http://localhost:3000/api/auth/reset-password/k0BBoBPRXjI6e9ZOQY7fJPeB?callbackURL=%2Fauth%2Freset-password</Url>. The actual reset password page reads this URL token to verify the user's identity before committing the change.
+
+````ts title="reset-password/page.tsx"
+
+const ResetPassword = () => {
+  const searchParams = useSearchParams();
+  const token = searchParams.get("token");
+  const error = searchParams.get("error");
+
+  async function handleResetPassword(data: ResetPasswordForm) {
+    if (token === null) return;
+    await authClient.resetPassword(
+      {
+        newPassword: data.password,
+        token,
+      },
+    );
+
+  }
+  return (
+      <div>{/* Reset Password UI */}</div>
+    )
+}
+````
+
+### Session Management
+
+Session management is another area where Better Auth shines with simplicity. The library provides helper methods to retrieve active sessions from the database directly. This makes it trivial to list all active devices for a user and allow them to revoke access as needed.
+
+````ts title="profile/page.tsx"
+async function SessionsTab({
+  currentSessionToken,
+}: {
+  currentSessionToken: string;
+}) {
+  const sessions = await auth.api.listSessions({ headers: await headers() });
+
+  return (
+    <Card>
+      <CardContent>
+        <SessionsManagement
+          sessions={sessions}
+          currentSessionToken={currentSessionToken}
+        />
+      </CardContent>
+    </Card>
+  );
+}
+
+````
+On the actual session management page, it is crucial to separate the current active session from the others. This filtering prevents users from accidentally locking themselves out of their active window. We can then provide explicit options to either revoke all other sessions globally or target a specific device.
+
+````ts title="session-management.tsx"
+const SessionsManagement = ({
+  sessions,
+  currentSessionToken,
+}: {
+  sessions: Session[];
+  currentSessionToken: string;
+}) => {
+  const router = useRouter();
+  const otherSessions = sessions.filter((s) => s.token !== currentSessionToken);
+  const currentSession = sessions.find((s) => s.token === currentSessionToken);
+
+  function revokeOtherSessions() {
+    return authClient.revokeOtherSessions(undefined, {
+      onSuccess: () => {
+        router.refresh();
+      },
+    });
+  }
+
+  return (
+  <SessionCard>
+  {/* UI implementation */}
+  </SessionCard>
+  )
+}
+
+export default SessionsManagement;
+
+function SessionCard(){
+  function revokeSession() {
+    return authClient.revokeSession(
+      {
+        token: session.token,
+      },
+      {
+        onSuccess: () => {
+          router.refresh();
+        },
+      },
+    );
+  }
+  return <div>{/* Card UI */}</div>
+}
+
+````
+
+In the snippet above, I omitted the boilerplate UI code to focus purely on the core logic. The remaining code in my repository simply uses frontend components to display parsed device details like the browser, operating system, device name, and connection date.
+
+### Account Linking
+
+Account linking allows a user to attach multiple external identities—like a GitHub and a Google account—to their single central profile. This architecture can sometimes cause confusion, but it simply means one `user` row in the database can have multiple related `account` rows.
+
+Once again, I will skip the frontend rendering details. The core logic simply involves listing all accounts, filtering out standard password-based `credential` accounts, and hooking up the native Better Auth link and unlink methods.
+
+````ts title="profile/page.tsx"
+async function LinkedAccountsTab() {
+  const accounts = await auth.api.listUserAccounts({
+    headers: await headers(),
+  });
+
+  const nonCredentialAccounts = accounts.filter(
+    (a) => a.providerId !== "credential",
+  );
+
+  return (
+    <Card>
+      <CardContent>
+        <AccountLinking currentAccounts={nonCredentialAccounts} />
+      </CardContent>
+    </Card>
+  );
+}
+````
+
+````ts title="account-linking.tsx"
+function linkAccount() {
+  return authClient.linkSocial({
+    provider,
+    callbackURL: "/profile",
+  });
+}
+
+function unlinkAccount() {
+  if (account == null) {
+    return Promise.resolve({ error: { message: "Account not found" } });
+  }
+  return authClient.unlinkAccount(
+    {
+      accountId: account.accountId,
+      providerId: provider,
+    },
+    {
+      onSuccess: () => {
+        router.refresh();
+      },
+    },
+  );
+}
+````
+
+### Delete Account
+
+Deleting an account is another straightforward process with Better Auth. However, since this is a highly destructive operation, we must add extra configuration inside <File>auth.ts</File>. This enables the feature and enforces a secure verification step to prevent accidental deletions.
+
+````ts title="auth.ts"
+
+export const auth = betterAuth({
+  user: {
+    deleteUser: {
+      enabled: true,
+      sendDeleteAccountVerification: async ({ user, url }) => {
+        console.log("--------------------------------");
+        console.log(`[DEV MOCK] Send Delete Account Verification`);
+        console.log(`To: ${user.email}`);
+        console.log(`Link: ${url}`);
+        console.log("--------------------------------");
+      },
+    },
+  },
+});
+
+````
+
+For the actual account deletion page, the UI can be as simple as a button that calls the `deleteUser` method on the `authClient` and passes a callback URL to redirect the user to the home page upon success.
+
+In the tutorial, the author uses a fancy custom button component to trigger an extra confirmation prompt before wiping the data. Adding a confirmation step is an excellent practice for any destructive action. You can easily use the [Alert Dialog](https://ui.shadcn.com/docs/components/radix/alert-dialog) component from Shadcn UI to accomplish the exact same thing, which is the approach I took in my own implementation.
