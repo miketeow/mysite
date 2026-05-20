@@ -1,9 +1,10 @@
-import { defineConfig, globalIgnores } from "eslint/config";
 import nextVitals from "eslint-config-next/core-web-vitals";
 import nextTs from "eslint-config-next/typescript";
-import tailwind from "eslint-plugin-tailwindcss";
-import * as mdx from "eslint-plugin-mdx";
 import checkFile from "eslint-plugin-check-file";
+import * as mdx from "eslint-plugin-mdx";
+import tailwind from "eslint-plugin-tailwindcss";
+import { defineConfig, globalIgnores } from "eslint/config";
+
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
@@ -26,7 +27,6 @@ const eslintConfig = defineConfig([
           "**/*.{ts,tsx}": "KEBAB_CASE",
         },
         {
-          // Ignore next.config.ts or data.test.js, ignore the middle extension like config or test
           ignoreMiddleExtensions: true,
         },
       ],
@@ -35,7 +35,8 @@ const eslintConfig = defineConfig([
       "check-file/folder-naming-convention": [
         "error",
         {
-          "app/**/": "KEBAB_CASE",
+          // FIX 1: Support Next.js dynamic routes like [slug]
+          "app/**/": "NEXT_JS_APP_ROUTER_CASE",
           "components/**/": "KEBAB_CASE",
         },
       ],
@@ -43,15 +44,21 @@ const eslintConfig = defineConfig([
   },
 
   // 2. Tailwind CSS Rules
-  // Will warn you if you write bg-red-999 (doesn't exist) or have conflicting classes
   ...tailwind.configs["flat/recommended"],
+  {
+    rules: {
+      // FIX 2: Disable strict classname checking.
+      // The plugin cannot read Tailwind v4 CSS variables yet.
+      "tailwindcss/no-custom-classname": "off",
+    },
+  },
 
   // 3. Markdown and Code Block Safety
   {
     ...mdx.flat,
     files: ["**/*.md", "**/*.mdx"],
     processor: mdx.createRemarkProcessor({
-      lintCodeBlocks: true, // enable spellchecker for JS block
+      lintCodeBlocks: true,
       languageMapper: {},
     }),
   },
@@ -60,13 +67,12 @@ const eslintConfig = defineConfig([
     files: ["**/*.md", "**/*.mdx"],
     rules: {
       ...mdx.flatCodeBlocks.rules,
-      "no-console": "off", // Allow console.log in tutorial
-      "no-undef": "error", // Catch typos
+      "no-console": "off",
+      "no-undef": "error",
     },
   },
-  // Override default ignores of eslint-config-next.
+
   globalIgnores([
-    // Default ignores of eslint-config-next:
     ".next/**",
     "out/**",
     "build/**",
