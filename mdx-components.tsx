@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { ComponentProps } from "react";
 
-import { ArrowUpRight, ChevronDown, FileCode, Folder } from "lucide-react";
+import { ArrowUpRight, ChevronDown } from "lucide-react";
 import type { MDXComponents } from "mdx/types";
 
 import CodeGroup from "@/components/code-group";
@@ -14,7 +14,7 @@ import {
   CollapsibleTrigger,
 } from "./components/ui/collapsible";
 
-export function useMDXComponents(): MDXComponents {
+export function getMDXComponents(): MDXComponents {
   return {
     CodeGroup,
     // 1. File Component (The "Soft Indigo Chip")

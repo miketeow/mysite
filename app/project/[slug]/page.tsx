@@ -1,3 +1,4 @@
+import { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
@@ -11,9 +12,9 @@ import OnThisPage from "@/components/on-this-page";
 import { SectionTitle } from "@/components/section-title";
 import { badgeVariants } from "@/components/ui/badge";
 import { getProjectBySlug, getProjects } from "@/lib/mdx";
-import { rehypeCopyLinked } from "@/lib/rehype-copy-plugin";
+import { rehypeExtractRawCode } from "@/lib/rehype-copy-plugin";
 import { formatDate } from "@/lib/utils";
-import { useMDXComponents } from "@/mdx-components";
+import { getMDXComponents } from "@/mdx-components";
 import GithubIcon from "@/public/github.svg";
 
 type Params = Promise<{ slug: string }>;
@@ -35,7 +36,11 @@ export async function generateStaticParams() {
   }));
 }
 
-export async function generateMetadata({ params }: { params: Params }) {
+export async function generateMetadata({
+  params,
+}: {
+  params: Params;
+}): Promise<Metadata> {
   const { slug } = await params;
   const post = await getProjectBySlug(slug);
 
@@ -166,12 +171,12 @@ export default async function ProjectPostPage({ params }: { params: Params }) {
           <article className="prose prose-slate prose-headings:font-semibold prose-a:text-blue-600 dark:prose-invert max-w-none pb-20 lg:pb-[80vh]">
             <MDXRemote
               source={content}
-              components={useMDXComponents()}
+              components={getMDXComponents()}
               options={{
                 mdxOptions: {
                   rehypePlugins: [
                     rehypeSlug,
-                    rehypeCopyLinked,
+                    rehypeExtractRawCode,
                     [rehypePrettyCode, options],
                   ],
                 },

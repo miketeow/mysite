@@ -41,6 +41,7 @@
     "@svgr/webpack": "^8.1.0",
     "@tailwindcss/postcss": "^4.3.0",
     "@trivago/prettier-plugin-sort-imports": "^6.0.2",
+    "@types/hast": "^3.0.4",
     "@types/node": "^20.19.40",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",

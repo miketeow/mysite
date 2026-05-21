@@ -1,17 +1,20 @@
+import type { Element, Root, Text } from "hast";
 import { visit } from "unist-util-visit";
 
-export const rehypeCopyLinked = () => {
-  return (tree: any) => {
-    visit(tree, (node) => {
-      if (node?.type === "element" && node?.tagName === "pre") {
-        const [codeEl] = node.children;
-        if (codeEl.tagName !== "code") return;
+export const rehypeExtractRawCode = () => {
+  return (tree: Root) => {
+    visit(tree, "element", (node: Element) => {
+      if (node.tagName === "pre") {
+        const codeEl = node.children[0];
 
-        // Extract the raw text from the code block
-        const rawText = codeEl.children[0].value;
+        if (codeEl && codeEl.type === "element" && codeEl.tagName === "code") {
+          const textNode = codeEl.children[0] as Text;
 
-        // Attach it as a property to the <pre> tag
-        node.properties["data-raw"] = rawText;
+          if (textNode && textNode.type === "text") {
+            node.properties = node.properties || {};
+            node.properties["data-raw"] = textNode.value;
+          }
+        }
       }
     });
   };
