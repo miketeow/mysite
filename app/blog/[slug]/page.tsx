@@ -11,6 +11,7 @@ import { SectionTitle } from "@/components/section-title";
 import { badgeVariants } from "@/components/ui/badge";
 import { getBlogPostBySlug, getBlogPosts } from "@/lib/mdx";
 import { rehypeExtractRawCode } from "@/lib/rehype-copy-plugin";
+import { rehypeMermaid } from "@/lib/rehype-mermaid";
 import { formatDate } from "@/lib/utils";
 import { getMDXComponents } from "@/mdx-components";
 
@@ -126,6 +127,7 @@ export default async function BlogPostPage({ params }: { params: Params }) {
               rehypePlugins: [
                 rehypeSlug,
                 rehypeExtractRawCode,
+                rehypeMermaid,
                 [rehypePrettyCode, options],
               ],
             },
