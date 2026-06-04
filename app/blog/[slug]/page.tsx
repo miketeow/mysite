@@ -4,26 +4,17 @@ import { notFound } from "next/navigation";
 
 import { Calendar, Hash, User } from "lucide-react";
 import { MDXRemote } from "next-mdx-remote/rsc";
-import rehypePrettyCode from "rehype-pretty-code";
 import rehypeSlug from "rehype-slug";
 
 import { SectionTitle } from "@/components/section-title";
 import { badgeVariants } from "@/components/ui/badge";
 import { getBlogPostBySlug, getBlogPosts } from "@/lib/mdx";
-import { rehypeExtractRawCode } from "@/lib/rehype-copy-plugin";
 import { rehypeMermaid } from "@/lib/rehype-mermaid";
+import { remarkPierreCode } from "@/lib/remark-pierre-code";
 import { formatDate } from "@/lib/utils";
 import { getMDXComponents } from "@/mdx-components";
 
 type Params = Promise<{ slug: string }>;
-
-const options = {
-  theme: {
-    dark: "github-dark-dimmed",
-    light: "github-light",
-  },
-  keepBackground: true,
-};
 
 // next js Static Site Generation
 export async function generateStaticParams() {
@@ -124,12 +115,8 @@ export default async function BlogPostPage({ params }: { params: Params }) {
           components={getMDXComponents()}
           options={{
             mdxOptions: {
-              rehypePlugins: [
-                rehypeSlug,
-                rehypeExtractRawCode,
-                rehypeMermaid,
-                [rehypePrettyCode, options],
-              ],
+              remarkPlugins: [remarkPierreCode],
+              rehypePlugins: [rehypeSlug, rehypeMermaid],
             },
           }}
         />

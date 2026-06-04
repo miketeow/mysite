@@ -57,6 +57,13 @@
 :root {
   --radius: 0.625rem;
 
+  /* @pierre/diffs code font (inherits into the component's shadow DOM) */
+  --diffs-font-family: var(--font-geist-mono);
+
+  /* Drive color-scheme from the theme so @pierre/diffs' light-dark() follows
+     the next-themes toggle instead of the OS preference. */
+  color-scheme: light;
+
   /* --- LIGHT MODE: Cloud Elegance Theme --- */
 
   /* Background: PANTONE 11-4201 Cloud Dancer */
@@ -117,7 +124,19 @@
   --sidebar-ring: oklch(0.48 0.16 23);
 }
 
+/* @pierre/diffs sets `color-scheme: light dark` on its shadow host (base layer),
+   which makes light-dark() follow the OS instead of our toggle. These unlayered
+   document rules win over the layered :host rule and pin it to the .dark class. */
+diffs-container {
+  color-scheme: light;
+}
+.dark diffs-container {
+  color-scheme: dark;
+}
+
 .dark {
+  color-scheme: dark;
+
   /* --- DARK MODE: Deep Luxury --- */
 
   /* Background: PANTONE 19-4005 Stretch Limo */

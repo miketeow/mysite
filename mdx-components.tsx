@@ -5,6 +5,10 @@ import { ArrowUpRight, ChevronDown } from "lucide-react";
 import type { MDXComponents } from "mdx/types";
 
 import CodeGroup from "@/components/code-group";
+import { CodeFile } from "@/components/diff/code-file";
+import { CodeMultiDiff } from "@/components/diff/code-multi";
+import { CodePatch } from "@/components/diff/code-patch";
+import { CodeTabs } from "@/components/diff/code-tabs";
 import { cn } from "@/lib/utils";
 
 import { CopyButton } from "./components/copy-button";
@@ -17,6 +21,11 @@ import {
 export function getMDXComponents(): MDXComponents {
   return {
     CodeGroup,
+    // @pierre/diffs renderers (names emitted by remark-pierre-code)
+    CodeFile,
+    CodeTabs,
+    PatchDiff: CodePatch,
+    MultiFileDiff: CodeMultiDiff,
     // 1. File Component (The "Soft Indigo Chip")
     File: ({
       children,

@@ -2,31 +2,20 @@ import { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
-import { transformerNotationDiff } from "@shikijs/transformers";
 import { Calendar, Globe, Hash, Layers } from "lucide-react";
 import { MDXRemote } from "next-mdx-remote/rsc";
-import rehypePrettyCode from "rehype-pretty-code";
 import rehypeSlug from "rehype-slug";
 
-import OnThisPage from "@/components/on-this-page";
 import { SectionTitle } from "@/components/section-title";
 import { badgeVariants } from "@/components/ui/badge";
 import { getProjectBySlug, getProjects } from "@/lib/mdx";
-import { rehypeExtractRawCode } from "@/lib/rehype-copy-plugin";
+import { rehypeMermaid } from "@/lib/rehype-mermaid";
+import { remarkPierreCode } from "@/lib/remark-pierre-code";
 import { formatDate } from "@/lib/utils";
 import { getMDXComponents } from "@/mdx-components";
 import GithubIcon from "@/public/github.svg";
 
 type Params = Promise<{ slug: string }>;
-
-const options = {
-  theme: {
-    dark: "github-dark-dimmed",
-    light: "github-light",
-  },
-  keepBackground: true,
-  transformers: [transformerNotationDiff()],
-};
 
 // next js Static Site Generation
 export async function generateStaticParams() {
@@ -63,7 +52,7 @@ export default async function ProjectPostPage({ params }: { params: Params }) {
   const { content, metadata } = post;
 
   return (
-    <div className="container mx-auto max-w-6xl px-4">
+    <>
       {/* header section */}
       <header className="border-border mb-16 border-b pb-10">
         {/* top row */}
@@ -164,34 +153,19 @@ export default async function ProjectPostPage({ params }: { params: Params }) {
         </div>
       </header>
 
-      {/* content grid */}
-      <div className="grid grid-cols-1 gap-10 lg:grid-cols-12">
-        {/* MDX Content */}
-        <div className="order-2 lg:order-1 lg:col-span-9">
-          <article className="prose prose-slate prose-headings:font-semibold prose-a:text-blue-600 dark:prose-invert max-w-none pb-20 lg:pb-[80vh]">
-            <MDXRemote
-              source={content}
-              components={getMDXComponents()}
-              options={{
-                mdxOptions: {
-                  rehypePlugins: [
-                    rehypeSlug,
-                    rehypeExtractRawCode,
-                    [rehypePrettyCode, options],
-                  ],
-                },
-              }}
-            />
-          </article>
-        </div>
-
-        {/* side: table of contents */}
-        <aside className="order-1 lg:order-2 lg:col-span-3">
-          <div className="lg:sticky lg:top-32">
-            <OnThisPage />
-          </div>
-        </aside>
-      </div>
-    </div>
+      {/* MDX Content */}
+      <article className="prose prose-slate prose-headings:font-semibold prose-a:text-blue-600 dark:prose-invert max-w-none pb-20 lg:pb-[80vh]">
+        <MDXRemote
+          source={content}
+          components={getMDXComponents()}
+          options={{
+            mdxOptions: {
+              remarkPlugins: [remarkPierreCode],
+              rehypePlugins: [rehypeSlug, rehypeMermaid],
+            },
+          }}
+        />
+      </article>
+    </>
   );
 }

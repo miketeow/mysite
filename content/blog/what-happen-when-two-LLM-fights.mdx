@@ -1,0 +1,107 @@
+---
+title: "What happen when two LLMs fights"
+publishedAt: "2026-05-26"
+description: "A fascinating event where I stumble upon two LLM contradicts each other"
+tags: ["article", "LLM", "ai"]
+author: "Mike"
+---
+
+## Background
+
+I did not plan to write this article initially, as I was focusing on finishing my coding project. This is just a tangent that will interrupt my main task, but as I kept prompting two different LLMs — Opus 4.7 and Gemini 3.1 Pro — to figure out the correct answer to a coding problem I have, the entire process slowly evolved into a fascinating event, which is a situation where two LLMs give different answers to me with high confidence, one accusing another of being wrong, and I have to go through a tedious manual process to verify it.
+
+It is not something as simple as an LLM confidently telling me that my Next JS project needs to use `middleware.ts` instead of `proxy.ts` in Next JS 16. This is a simple mistake that can be dismissed because so many of their training data have Next JS projects still using `middleware.ts` instead of `proxy.ts`; this is just the problem of stale and outdated training data.
+
+What I encountered is a deeper non-hallucination logic error which is quite difficult to spot in my experience. One reason might be because I am not an expert in this field yet. If it were the case of using an LLM for guidance to play Pokemon games, maybe I would have a higher chance of noticing that it gives bad advice. But in terms of programming, I am just someone who is inexperienced and still learning. Who am I to doubt the answer that Anthropic or Google DeepMind give me?
+
+I feel a strong urge to write down this process because this event strongly reminds me of Andrej Karpathy's [Council of LLMs tweet](https://x.com/karpathy/status/1992381094667411768), and the fact is that I did not use this process on a minor task like reading or summarising a book and trying to find minor discrepancies between two results. I unknowingly applied this process to an actual problem that I have where I personally had no idea what the correct answer was at the time, and it is only in hindsight, when I am writing this article, that I realise that my process of asking two LLMs to give opinions on the same problem is the essence of the Council of LLMs.
+
+There are ways to fact check the output, but it required a lot of verification in every single step.
+
+I guess the strongest point that I want to make by writing this article is because I think it is quite relevant and important to understand that even at this point in time where people praise the capabilities of Opus 4.7 and Gemini 3.1 Pro, there are problems where it requires expertise to write the correct prompt, provide the correct amount of context, or use the correct skills to get a verifiable result. It is not the simple test of how many 'r's in strawberry or whether I should walk or drive to a car wash. It is a problem where the person does not know the correct answer, and two LLMs gave two different answers, where I need to do a lot of verification to determine which one is correct.
+
+## Event Timeline
+
+I will try my best to construct the timeline to this event, to give more context to emphasise the main points here, which is **what happens when two LLMs give two different answers confidently**. Maybe you are a programming expert who can spot my human errors immediately when you see my problem statement, and you are screaming the correct answer, and saying that I should not even consult an LLM for this kind of problem, but so many people use LLMs to create a dark mode toggle, so don't judge me too harshly. But **I don't think my lack of programming knowledge is the point here**.
+
+I honestly cannot judge accurately what level of programming experience will be required to understand the coding problem that I encountered. I am guessing a junior to mid tier engineer could understand it. If you can understand and even know the correct answer, good for you. If you cannot understand it, just skim through it because the coding issue is not the point here.
+
+This is a Go backend and Next JS frontend CRUD monorepo application. I am using PostgreSQL as the database, and using `sqlc` to generate type safe Go code from raw SQL queries. The problem that I have is how to deal with nullable timestamps.
+
+1. Initially, I was using Gemini for guidance throughout the first development process; there were no major issues and the application didn't crash. At one point, I needed to deal with a nullable timestamp with time zone field in the database, and Gemini suggested I override the types from a `pgtype.Timestamptz` to `time.Time`, which is more compatible with the Go backend. During the implementation process, I found out that the sqlc parser seems to treat `timestamptz` and `timestamp with time zone` differently. At the time, there were no compilation errors or runtime errors even after implementing the proposed solution by Gemini.
+
+2. During the late stage of the development, I switched to Claude and used the Opus model. I encountered a similar issue where I had to deal with another nullable timestamp field. I thought I was going to reuse the same trick to solve it, but Opus advised against it, saying that the solution is flawed.
+
+3. I had multiple conversations between Opus and Gemini, trying to figure out who is telling the truth and what the actual solution is. I tried out different solutions and figured out which implementation is correct based on the actual compiler result from my editor, instead of relying on the LLM's expected result.
+
+4. I do eventually figure out the solution. This post will not focus on the technical side of my problem and solution; I have written all those in a [separate post](/blog/sqlc-timestamptz). What I will focus on in this post is the process of prompting and trying to get the LLMs to provide me the correct result. I also try to figure out what made it give me a flawed solution in the first place, and what the lesson learned from this event is.
+
+## Problems
+
+- Before going into what actually went wrong, this investigation process relies a lot on the introspection ability of the LLM model, since no one truly has access to the internal logs of the LLM.
+- As for the thinking steps process, it is quite useless in this case because I don't think it proves it is doing "introspection". It does mention what it is doing step by step, but still it cannot be used to prove introspection.
+- Regardless of whether it is actually doing true "introspection", maybe it is just faking it and it simply analyses the original response, and my accusation of how the response is flawed, and then finally returns a fake "introspection" response. I am not going to attempt to deep dive into it to prove whether it is absolutely true or false introspection, as I don't think this can be simply achieved through some clever prompting. But the point is, regardless of whether it is true or false, there are some valuable insights from its response. It might not be the truth, but it is not gibberish either; the response does make sense to a certain extent.
+- This process is built upon the assumption that there is some level of introspection for the LLM to understand its mistake. This leads to some valuable lessons at the end of this process, and I don't think it will become completely invalid even if the introspection is proved to be fake later on.
+First of all, I don't think this is a hallucination problem. I managed to trace back my conversation with Gemini, and asked how it thinks it made the mistake the first time, and this is the response:
+
+> If you ask an AI (or search StackOverflow) for "How to setup sqlc with pgx v5," the AI will immediately recognize the pattern and fetch the standard "Idiomatic Go Override" boilerplate, (code snippet). The reason an AI would suggest this config without warnings is based on a massive assumption: It assumes every timestamp in your database is `NOT NULL`.
+In 90% of basic tutorials, the only timestamps a developer uses are `created_at` and `updated_at`. Because those are always required, mapping them to a flat `time.Time` works flawlessly. The AI optimizes for this "Happy Path".
+
+And then after I confronted Gemini with Opus's argument about the flawed solution, it admitted it's flawed and corrected the solution. I asked again why it made those mistakes; here is its response:
+
+1. It Was Not a Hallucination or a Bad Prompt.
+
+I didn't invent anything; pgtype.Timestamptz is real, and the database edge cases I mentioned are real. Your prompt was also excellent and gave me all the necessary context. The failure was a logic and reasoning error, specifically caused by how LLMs weigh training data.
+
+2. The Core Reason: Heuristic Pattern Matching.
+
+LLMs operate fundamentally on pattern recognition and probability. In my training data, discussions involving Go, PostgreSQL, pgx, sqlc, and null values heavily skew toward a very specific, loud debate in the backend community: How do we avoid nil pointer panics?  When you asked about overriding `time.Time`, my generation engine recognized the "pgx null handling" pattern. The mathematically highest-probability "expert" response to that pattern in isolation is: "Use the driver's native pgtype to ensure database safety." I essentially applied a heuristic shortcut. I grabbed the "Database Best Practice" manual and read from it directly.
+
+3. The Architectural Blindspot (Contextual Myopia)
+This is where Opus completely outmaneuvered me. While I successfully recalled the best practice for the Database Layer, I suffered from Contextual Myopia.
+
+Even though I had your entire codebase in my context window, I failed to synthesize the multi-tier architecture. I optimized perfectly for getting the data out of Postgres safely, but I completely ignored what your code was going to do with that data next—specifically, handing those sqlc structs directly to Go's encoding/json package to send to a Next.js frontend.
+
+Opus didn't just look at the database boundary; it traced the variable's lifecycle all the way to the HTTP response. It recognized that optimizing for the database layer (pgtype) destroyed the ergonomics of the HTTP layer (JSON serialization).
+
+After all these conversations, my first thought is that Gemini is clearly wrong here and Opus is the better model. But then another issue, which is related to the type override issue, proved that Opus also will make mistakes. I think the Opus mistake is so much harder to catch, especially since it is mixed in the response where it confidently argues that Gemini is wrong in this first issue (where it was later proven that Opus is correct), and also wrong in the second issue (where it was later proven that Opus is wrong and Gemini is correct indeed).
+
+The second issue has something to do with sqlc parsing the type's name. Technically, it should treat `timestamptz` and `timestamp with time zone` as the same thing. But the results prove otherwise. Opus looks at how I write the long verbose version and said that this doesn't make sense. Obviously, because `timestamptz` and `timestamp with time zone` should be the same thing, and it is treated as the same thing by PostgreSQL. But there is a bug in the sqlc parser that fails to match the words, which is what confused the Opus model the first time. Strangely, in the case of the Opus model, it doesn't consider the probability that the library might have bugs, and it keeps insisting that this doesn't make sense from a reasoning standpoint, which I strongly agree with after reading its argument. But on the other hand, Gemini seems to look at the result and try to justify the result by considering every possibility of why this result happened. It automatically searched online and gave me a report of GitHub issues where people did complain about similar issues, and proposed a fix to get around these issues, which is just to use the verbose strings for the time being.
+
+## Analysis
+
+The first behaviour is understandable; many people who are familiar with LLMs are well aware of this risk. This is extremely similar to how most LLMs still recommend Next JS projects to use `middleware.ts` instead of `proxy.ts` even though the official Next JS 16 has announced the changes: [getting started with proxy](https://nextjs.org/docs/app/getting-started/proxy). Because there were so many Next JS projects in the training data still using `middleware.ts`.
+
+The second behaviour, which is the heuristic pattern matching, is also an expected feature of LLMs. It is basically the extension of the first behaviour, combined with pattern matching, and it simply returns the so-called best practice, which basically means stuff that is mentioned the most on the internet involving these few keywords.
+
+The context myopia might be one of the most recent issues that happens a lot if the user is simply using the chat window with the LLM. Many LLM platforms realise this context issue, and introduce a lot of new tools to solve this. Even though I did import my code repository into the Gemini application, it still performs worse than Claude Code.
+
+In the section on heuristic pattern matching, it mentioned overriding `time.Time`, which is incorrect; the correct implementation is about overriding `pgtype.Timestamptz` to `time.Time`. But the reason it gave this response is because I asked the wrong question in the same session previously. I asked: "can you figure out what is the reason we override the time.Time to become pgtype.Timestamptz in the first time? I even config it directly in the sqlc.yaml". This question is wrong because I misunderstood the entire config. But strangely, Gemini did not point out any anomaly, and answered my question with a straight answer, assuming what I asked is normal.
+
+Even though later I confronted Gemini again, here is the response:
+
+> The AI Post-Mortem: Why did I agree with you?
+This is a documented phenomenon in AI research called User-Alignment Bias or Sycophancy.
+
+When an LLM is trained, it is rewarded for being "helpful" and "agreeable." If a user states a premise as a fact (e.g., "Why did we configure it this way?"), the model's first mathematical instinct is to trust the user's context rather than challenge it.
+
+My generation engine essentially thought: "The user says we did X. I must figure out the smartest possible reason why X is a good idea." It then searched its training data for debates about time.Time vs pgtype.Timestamptz, found the "nil pointer panic" arguments (which are real arguments people make), and aggressively stitched them together to justify the redundant override you asked about.
+
+## Conclusion
+
+After spending some time on this issues, I have some thought about what combination of factors will lead to this kind of issues.
+- First of all, you are not an expert in that particular field.
+- You are not simply asking LLM to help you to save time on doing stuff you already know how to do, and you are also not using LLM as a reminder where you know the answer, but you simply forget it at the moment, and you use it to remind you. You are asking the LLM question which you genuinely don't know the answer.
+- You cannot be a complete beginner as well, or else you cannot provide enough context and a good enough prompt, and you also dunno what you dunno. If you are navigating in a completely new field, it will be very difficult to know what went wrong.
+
+I believe that this kind of errors will leak into actual works compare to those errors that are more obvious, and thus this is more dangerous and more difficult to find out what went wrong.
+
+There are multiple ways to resolve this, and I predict that the ability and the effectiveness of a person to resolve this kind of issues would get more valuable in the future when every kind of works involve AI.
+
+One way is to keep brute forcing and spam "fix it" into the LLM, and this method simply rely on how good the model will get in the future. Obviously this method is the most ineffective, it will waste a lot of time and burn a lot of token, which is not cheap.
+
+Another slighly smarter way is to use decicated harness tools where more context and more specific tools are provided, which woulc technically help improve the performance of the model, compared to just using the chat version of the LLM.
+
+The smartest version is probably those with actual knowledge, and write test cases. When a lot of the times, they use LLM as a kind of expansion of their abilities, where they know the answers, it is just that AI tools 10x their output and save time. Even when they are working in a completely new field, it is extremely likely that they used it to learn and navigate the new field very quickly instead of simply relying on LLM to generate the feature and this new feature get treated like a complete black box where no one actually understand what is going on.
+
+It takes time and experience and the curiousity to learn stuff to build this kind of ability. Even when you are working in a new field where you are not an expert, the curiousity to learn will hone your ability to quickly **identify the constraint** and also your ability to have **clarity on what you are trying to achieve** within the new field, and I don't think these abilities come easily from vibe-coding 100 different applications.

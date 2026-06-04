@@ -9,7 +9,7 @@ techStack: ["Next.js 16", "Tailwind CSS", "Go", "Shadcn UI", "PostgreSQL", "pgx"
 
 # Introduction
 
-This is a custom project using Next.js for the frontend and Go for the backend. I decided to build this without relying on video tutorials or courses: every coding and architectural decision is the result of brainstorming sessions with Gemini.
+This is a custom project using Next.js for the frontend and Go for the backend. I decided to build this without relying on video tutorials or courses: every coding and architectural decision is the result of brainstorming sessions with LLM.
 
 Initially, I just wanted a sandbox to combine my Next.js and Go experience. Gemini suggested building a standard Invoice PDF Generator. I pushed back because I wanted to implement an LLM-driven summary feature. We eventually agreed on a Policy Forum project. Users can register accounts, complete KYC verification, and post their thoughts. It functions as a standard CRUD app at its core, but the twist is using a lightweight LLM to synthesize posts from different users into a single, cohesive summary.
 
@@ -48,15 +48,19 @@ func corsMiddleware(next http.Handler) http.Handler {
 
 ```
 
-One fascinating detail about allowed methods is the `OPTIONS` method. This is strictly required when your application uses different frontend and backend URLs.
+One fascinating detail about allowed methods is the `OPTIONS` method.
 
-Imagine a scenario where a user visits the real website at <Url>https://www.policy-forum.com</Url>, logs in, and receives a session cookie in their browser. Later, that same user might stumble onto a malicious website at <Url>https://www.policy-fake.com</Url>. A hacker could write a JavaScript `fetch` request aiming at <Url>https://api.policy-forum.com/delete-account</Url> using the `DELETE` method to silently wipe the user's account.
+To understand why it matters, it helps to step back and look at the kind of attack CORS exists to prevent in the first place. Imagine a user visits the real website at <Url>https://www.policy-forum.com</Url>, logs in, and receives a session cookie in their browser. Later, that same user stumbles onto a malicious website at <Url>https://www.policy-fake.com</Url>. A hacker could write a JavaScript `fetch` request aiming at <Url>https://api.policy-forum.com/delete-account</Url> using the `DELETE` method to silently wipe the user's account.
 
-Here is how the browser defends against this exact attack. When the browser detects a cross-origin request modifying data, it pauses the `DELETE` action. It automatically fires an invisible, preflight `OPTIONS` request to the Go server first. The browser forcefully attaches an unfakeable header: `Origin: https://www.policy-fake.com`.
+Here is how the browser defends against this. When the browser is about to send a cross-origin request that isn't "simple"—and a `DELETE` qualifies—it pauses the real request and first fires an invisible preflight `OPTIONS` request to the Go server. The browser forcefully attaches an unfakeable header: `Origin: https://www.policy-fake.com`.
 
-The Go server processes this preflight and sends back its configured rules: `Access-Control-Allow-Origin: https://www.policy-forum.com`. The browser receives this, compares the URLs, sees a mismatch, and flat-out refuses to send the actual `DELETE` request.
+The Go server processes this preflight and sends back its configured rules: `Access-Control-Allow-Origin: https://www.policy-forum.com`. The browser receives this, compares the origins, sees a mismatch, and flat-out refuses to send the actual `DELETE` request.
 
-Because this protection is hardcoded into the browser itself, a hacker could bypass it using tools like Postman or a custom Python script. However, since those tools are running outside the user's browser, they won't have the user's authentic session cookie. The Go server will simply reject the naked request with a 401 Unauthorized Error.
+Because this protection is hardcoded into the browser itself, a hacker could bypass it using tools like Postman or a custom Python script. However, since those tools run outside the user's browser, they won't carry the user's authentic session. The Go server will simply reject the naked request as unauthorized.
+
+That is the textbook story for why CORS and preflights exist. The reason `OPTIONS` matters in *this* application is more mundane, and worth being precise about. The browser only sends a preflight when a request falls outside the "simple" category—roughly, anything beyond a plain `GET` or a form-style `POST`. Two things I do on nearly every authenticated call push my requests out of that category. My login and register calls send `Content-Type: application/json`, which is not one of the content types the browser considers simple. And my authenticated requests attach an `Authorization: Bearer` header, which is not on the safelist either. Either one on its own forces a preflight.
+
+So if my CORS middleware didn't answer that `OPTIONS` call, the attack scenario wouldn't be my problem—my own frontend would break first. The browser would preflight my legitimate `POST /api/auth/login`, get no valid response, and never send the real request. The `OPTIONS` branch in the middleware exists to keep my own app talking to itself.
 
 With CORS configured and a successful connection established between frontend and backend, I moved on to the database layer.
 
@@ -137,11 +141,11 @@ While this configuration solves the compatibility issue, the reason `pgx` introd
 
 <DeepDive title="Why pgx Uses Custom pgtype Structs">
 
-Imagine you have a database column defined as `AGE INT NULLABLE`. If you use a standard Go `int` to read a row where the age is actually NULL, Go's zero-value behavior kicks in and assigns it a `0`. Your frontend might then render "0 years old". You lose the ability to tell whether the user is a newborn baby or if they simply left the field blank.
+Imagine you have a database column defined as `AGE INT NULLABLE`. If you use a standard Go `int` to read a row where the age is actually NULL, Go's zero-value behavior kicks in and assigns it a `0`. Your frontend might then render "0 years old". You lose the ability to tell whether the user is a newborn baby or simply left the field blank.
 
-The traditional Go solution is to use an integer pointer `*int` for nullable columns. If the value is genuinely NULL, the pointer holds a `nil` reference. For a standard application, this is fine. But if you are querying millions of rows, your server has to allocate millions of tiny integer pointers on the heap memory. This triggers heavy garbage collection and tanks your performance.
+The traditional Go solution is to use an integer pointer `*int` for nullable columns. If the value is genuinely NULL, the pointer holds a `nil` reference. For a standard application, this is fine. But if you are scanning millions of rows into a slice of `*int`, every non-nil value becomes its own separate little allocation that the garbage collector has to track, and reading each value costs an extra pointer dereference—the CPU has to follow the pointer to wherever the integer actually lives.
 
-The author of `pgx` bypassed this by introducing `pgtype`. Instead of pointers, `pgtype` uses a flat struct allocated directly on the stack:
+The author of `pgx` bypassed this by introducing `pgtype`. Instead of a pointer, `pgtype` packs the value and its null-ness into a single flat struct:
 
 ```go
 type Int4 struct{
@@ -150,7 +154,7 @@ type Int4 struct{
 }
 ```
 
-When the database returns a NULL, `pgx` sets `Int32 = 0` and `Valid = false`. You just check the boolean. This entirely avoids heap allocations and pointer dereferencing for null checks. It is a great reminder to avoid making columns NULLABLE unless absolutely necessary, as it adds structural overhead when scaling to massive datasets.
+When the database returns a NULL, `pgx` sets `Int32 = 0` and `Valid = false`. You just check the boolean. A slice of these structs stores the values inline and contiguously, so there is no separate allocation per value and no pointer to chase when you read one. It is a great reminder to avoid making columns NULLABLE unless absolutely necessary, as it adds structural overhead when scaling to massive datasets.
 
 </DeepDive>
 
@@ -158,7 +162,7 @@ When the database returns a NULL, `pgx` sets `Int32 = 0` and `Valid = false`. Yo
 
 Another architectural decision I made was to keep the database schema as dumb as possible. PostgreSQL is perfectly capable of generating its own UUIDs and timestamps using functions like `gen_random_uuid()` or `NOW()`. I chose to leave those out of the SQL layer entirely and handle the generation inside the Go server.
 
-From a distributed systems perspective, relying on the database for generation creates blind spots. Modern applications often rely on serverless deployments. Your Go server might spin up on Vercel in one geographic region, while your database is hosted in an entirely different timezone. If they aren't strictly synchronized to UTC, you end up with corrupted, mismatched timestamp data.
+From a distributed systems perspective, relying on the database for generation creates blind spots. Modern applications often rely on serverless deployments. Your Go server might spin up on Vercel in one geographic region, while your database is hosted in an entirely different region. If they aren't strictly synchronized to UTC, you end up with corrupted, mismatched timestamp data.
 
 There is also the problem of idempotency during network retries. If the Go server sends an `INSERT` query but the network connection drops right before the database sends back the success acknowledgment, the Go server assumes the request failed. It will retry and send the same query again. If PostgreSQL is generating the IDs, it will happily create a second, duplicate user with a brand new ID.
 
@@ -177,7 +181,7 @@ args := store.CreateUserParams{
 	UpdatedAt:      now,
 }
 
-````
+```
 
 ### Wiring pgxpool
 
@@ -190,11 +194,12 @@ I installed `pgxpool`:
 ```bash
 $ go get github.com/jackc/pgx/v5/pgxpool
 ```
+
 To set up the database pool, we need to pass it a context. I used the root context `context.Background()` because it has no timeout and never cancels. This is exactly what we want for a connection pool: it needs to stay alive for the entire lifecycle of the application until we explicitly turn the server off.
 
 Instead of taking the lazy route and defining a global `var DB *pgxpool.Pool`, I created an `application` struct. By attaching the database pool to this struct and turning all HTTP handlers into methods on this struct, I can safely pass the database connection to any route that needs it. Global variables make unit testing a nightmare and invite race conditions, so the struct approach is much safer.
 
-````go title="main.go"
+```go title="main.go"
 
 type application struct {
 	db *store.Queries
@@ -211,7 +216,7 @@ func main() {
 
 	log.Println("Successfully connect to the PostgreSQL database")
 
-	// Initialize the application atruct with the sqlc-generated store
+	// Initialize the application struct with the sqlc-generated store
 	app := &application{
 		db: store.New(pool),
 	}
@@ -229,7 +234,7 @@ func main() {
 
 func (app *application) registerHandler(w http.ResponseWriter, r *http.Request) {}
 
-````
+```
 
 Pay close attention to the line `app := &application{ db: store.New(pool) }`. When we run `sqlc generate`, it creates a <File>internal/store/db.go</File> file containing a `Queries` struct and a `New()` function. Calling `store.New(pool)` requests that `Queries` object, which is packed with all our database functions. By attaching it to our `app` struct, we can simply call `app.db.CreateUser()` from anywhere in our handlers later on.
 
@@ -277,7 +282,7 @@ func (app *application) registerHandler(w http.ResponseWriter, r *http.Request) 
 	user, err := app.db.CreateUser(r.Context(), args)
 	if err != nil {
 		log.Printf("Database error: %v", err)
-		// in production, check for unique constraint violation (e.g., email already exists)
+		// in production, check for unique constraint violation such as email already exists
 		http.Error(w, "Failed to create user", http.StatusInternalServerError)
 		return
 	}
@@ -298,7 +303,7 @@ The logic here follows standard Go best practices. I set up the proper struct, h
 
 ### Sign-Up Form
 
-Over on the frontend, I used `react-hook-form` based on the official (Shadcn UI documentation) [https://ui.shadcn.com/docs/forms/react-hook-form] . The only major departure from their guide is that I am using a custom `fetch` function because I need to communicate directly with my Go backend instead of a standard Next.js API route.
+Over on the frontend, I used `react-hook-form` based on the [official Shadcn UI documentation](https://ui.shadcn.com/docs/forms/react-hook-form). The only major departure from their guide is that I am using a custom `fetch` function because I need to communicate directly with my Go backend instead of a standard Next.js API route.
 
 ```tsx title="sign-up-form.tsx"
 
@@ -322,7 +327,7 @@ async function onSubmit(values: z.infer<typeof SignUpSchema>) {
 
 ```
 
-To keep things clean, I created a small helper function for all my Go server requests. This saves me from manually updating URLs across the entire codebase when I eventually deploy the application to a production domain. I also rely on (t3-env)[https://env.t3.gg/docs/nextjs] to ensure my environment variables are type-safe.
+To keep things clean, I created a small helper function for all my Go server requests. This saves me from manually updating URLs across the entire codebase when I eventually deploy the application to a production domain. I also rely on [t3-env](https://env.t3.gg/docs/nextjs) to ensure my environment variables are type-safe.
 
 ```ts title="api.ts"
 
@@ -453,7 +458,7 @@ You can customize the JWT struct depending on your application's specific needs.
 
 With our crypto tools ready, we can build the login handler. First, I wrote the SQL query to retrieve a user by their email.
 
-```sql title="/queries/users.sql"
+```sql title="internal/store/queries/users.sql"
 
 -- name: GetUserByEmail :one
 SELECT id, name, email, hashed_password, kyc_status, created_at, updated_at
@@ -618,7 +623,7 @@ When a page actually needs to display sensitive user information, we must verify
 
 I created a <File>session.ts</File> file with a `getSession` function. I wrapped this function in the React `cache` utility. This prevents duplicate network requests if multiple components on the same page ask for the user session simultaneously.
 
-This function sends a POST request to the Go server at <Url>/api/users/me</Url> and attaches the Bearer token extracted from the cookie. The Go handler verifies the token and returns the user data if valid.
+This function sends a request to the Go server at <Url>/api/users/me</Url> and attaches the Bearer token extracted from the cookie. The Go handler verifies the token and returns the user data if valid.
 
 ```ts title="session.ts"
 import { cookies } from "next/headers";
@@ -699,7 +704,7 @@ func (app *application) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 		// injection: put uuid safely into the context
 		ctx := context.WithValue(r.Context(), userIDKey, claims.UserID)
 
-		// create a new request with the updatedcontext
+		// create a new request with the updated context
 		req := r.WithContext(ctx)
 
 		// allow user to pass through with actual handler
@@ -717,13 +722,13 @@ The intuitive approach would be to store it using a simple string:
 
 ```go
 ctx := context.WithValue(r.Context(), "userID", claims.UserID)
-````
+```
 
 However, doing this triggers a name collision warning in Go.
 
 Context is a global concept. The exact same context object is passed through your custom middleware, the router, and any third-party libraries you might be using. If a third-party logging library also decides to store data under the exact string `"userID"`, it will overwrite your authenticated UUID. Your downstream handler will suddenly receive a logging ID instead of a user ID, breaking the application.
 
-To solve this elegantly, Go allows us to make context keys mathematically unique by defining a custom, unexported type based on a string.
+To solve this elegantly, Go allows us to make context keys unique by defining a custom, unexported type based on a string.
 
 ```go
 type contextKey string
@@ -731,19 +736,19 @@ type contextKey string
 const userIDKey = contextKey("userID")
 ```
 
-In Go, `contextKey("userID")` is fundamentally different from the raw string `"userID"`. Because `contextKey` is defined within our specific `main` package, it acts as a unique cryptographic fingerprint. If a third-party library uses the exact same line of code, it generates a `thirdParty.contextKey` which the compiler knows is entirely distinct from our `main.contextKey`.
+In Go, `contextKey("userID")` is fundamentally different from the raw string `"userID"`. Because `contextKey` is defined within our specific `main` package, the compiler treats it as its own distinct type. If a third-party library uses the exact same line of code, it generates a `thirdParty.contextKey` which the compiler knows is entirely distinct from our `main.contextKey`.
 
 ### The Protected Dashboard
 
 With the Go backend secured, here is how we hook everything up in the Next.js frontend to render the private data.
 
-```ts title="/dashboard/page.tsx"
+```tsx title="app/dashboard/page.tsx"
 
 interface UserProfile {
   id: string;
   name: string;
   email: string;
-  kyc_status: string;zz
+  kyc_status: string;
   created_at: string;
   updated_at: string;
 }
@@ -767,3 +772,157 @@ export default async function Dashboard() {
 ```
 
 With this final piece, we successfully fetch the authenticated user's profile from the Go backend and render it securely on the screen.
+
+## Posts and Comments
+
+With authentication done, I moved on to the forum itself. The first step was the database schema for posts and comments. I'll skip the routine parts and focus on the one idea that turned into a genuine rabbit hole: optional filters.
+
+I wanted posts to carry a category like environment or education, and I wanted users to filter the feed by category, by author, or by both at once. The naive way to support that is to write one query per combination of filters:
+
+```sql title="internal/store/queries/posts.sql"
+-- name: ListAllPosts :many
+SELECT posts.id, posts.title, posts.category, posts.created_at, users.name AS author_name
+FROM posts
+JOIN users ON posts.user_id = users.id
+ORDER BY posts.created_at DESC
+LIMIT $1 OFFSET $2;
+
+-- name: ListPostsByCategory :many
+SELECT posts.id, posts.title, posts.category, posts.created_at, users.name AS author_name
+FROM posts
+JOIN users ON posts.user_id = users.id
+WHERE posts.category = $1
+ORDER BY posts.created_at DESC
+LIMIT $2 OFFSET $3;
+
+-- name: ListPostsByAuthor :many
+SELECT posts.id, posts.title, posts.category, posts.created_at, users.name AS author_name
+FROM posts
+JOIN users ON posts.user_id = users.id
+WHERE users.name = $1
+ORDER BY posts.created_at DESC
+LIMIT $2 OFFSET $3;
+
+-- name: ListPostsByCategoryAndAuthor :many
+SELECT posts.id, posts.title, posts.category, posts.created_at, users.name AS author_name
+FROM posts
+JOIN users ON posts.user_id = users.id
+WHERE posts.category = $1 AND users.name = $2
+ORDER BY posts.created_at DESC
+LIMIT $3 OFFSET $4;
+```
+
+The handler then has to branch through every combination to pick the right query:
+
+```go title="main.go"
+func (s *Server) ListPostsHandler(w http.ResponseWriter, r *http.Request) {
+    category := r.URL.Query().Get("category")
+    author   := r.URL.Query().Get("author")
+    limit    := 10
+    offset   := 0
+
+    var posts []db.Post
+    var err error
+
+    if category == "" && author == "" {
+        posts, err = s.store.ListAllPosts(r.Context(), db.ListAllPostsParams{
+            Limit:  int32(limit),
+            Offset: int32(offset),
+        })
+    } else if category != "" && author == "" {
+        posts, err = s.store.ListPostsByCategory(r.Context(), db.ListPostsByCategoryParams{
+            Category: category,
+            Limit:    int32(limit),
+            Offset:   int32(offset),
+        })
+    } else if category == "" && author != "" {
+        posts, err = s.store.ListPostsByAuthor(r.Context(), db.ListPostsByAuthorParams{
+            Name:   author,
+            Limit:  int32(limit),
+            Offset: int32(offset),
+        })
+    } else {
+        posts, err = s.store.ListPostsByCategoryAndAuthor(r.Context(), db.ListPostsByCategoryAndAuthorParams{
+            Category: category,
+            Name:     author,
+            Limit:    int32(limit),
+            Offset:   int32(offset),
+        })
+    }
+
+    if err != nil {
+        http.Error(w, "failed to list posts", http.StatusInternalServerError)
+        return
+    }
+
+    // respond...
+}
+```
+
+This obviously doesn't scale. The number of branches grows as 2ⁿ, where n is the number of optional filters: two filters give you four branches, three filters give you eight. Every new filter doubles the surface area I have to write and maintain.
+
+The way out is to stop writing a query per combination and instead write one query that treats each filter as optional. The standard SQL trick for that is an `IS NULL OR` guard in the `WHERE` clause: if the filter is NULL, the condition short-circuits to true and the row passes; if it has a value, the equality check applies.
+
+```sql title="internal/store/queries/posts.sql"
+SELECT posts.id, posts.title, posts.category, posts.created_at, users.name AS author_name
+FROM posts
+JOIN users ON posts.user_id = users.id
+WHERE $1 IS NULL OR posts.category = $2
+ORDER BY posts.created_at DESC
+LIMIT $3 OFFSET $4;
+```
+
+This works, but it's ugly. The same category value has to be passed twice—once for the NULL check at `$1` and once for the equality at `$2`—because positional parameters treat them as two independent inputs. That's an easy way to introduce a bug where the two drift apart.
+
+`sqlc` has a cleaner answer: named parameters. Instead of positional `$1` and `$2`, I can write `@category` in both spots, and `sqlc` understands they refer to the same input. Postgres still needs to know the type of that parameter, though—is it a NULL string or a NULL integer?—so I have to cast it to the enum type I declared for the category column:
+
+```sql
+WHERE @category::post_category IS NULL OR posts.category = @category
+```
+
+Here is the enum, declared back when I created the posts schema:
+
+```sql title="002_init_forum.sql"
+CREATE TYPE post_category AS ENUM (
+    'PENDING',
+    'URBAN_PLANNING',
+    'TRANSPORT',
+    'ECONOMY',
+    'HEALTHCARE',
+    'EDUCATION',
+    'GENERAL'
+);
+
+-- create posts table
+CREATE TABLE posts (
+    id UUID PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    content TEXT NOT NULL,
+    category post_category NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL
+);
+```
+
+So the SQL is clean now. But the moment I tried to actually pass "no category" from Go, a new problem surfaced. For a non-nullable parameter, `sqlc` generates a plain Go `string` field, and a Go `string` has no concept of `nil`—its zero value is the empty string `""`. So when the user applies no category filter, my handler sends `""`, and Postgres faithfully runs `WHERE category = ''`, which matches nothing. The `IS NULL` branch never fires, because `""` is a perfectly valid string, not NULL.
+
+The fix is to make the parameter genuinely nullable, and `sqlc` exposes this through `sqlc.narg()`—the "n" stands for nullable. When I wrap the parameter in `sqlc.narg('category')`, `sqlc` generates a `NullPostCategory` struct instead of a bare string:
+
+```go
+type NullPostCategory struct {
+	PostCategory PostCategory `json:"post_category"`
+	Valid        bool         `json:"valid"` // Valid is true if PostCategory is not NULL
+}
+```
+
+This is the same `Valid bool` pattern as the `pgtype` structs from earlier. Now my Go handler can send a real NULL by setting `Valid` to false, and Postgres recognizes it as NULL rather than an empty string—so the `IS NULL` branch finally does what I wanted. The final query:
+
+```sql title="internal/store/queries/posts.sql"
+SELECT posts.id, posts.title, posts.category, posts.created_at, users.name AS author_name
+FROM posts
+JOIN users ON posts.user_id = users.id
+WHERE (sqlc.narg('category')::post_category IS NULL OR posts.category = sqlc.narg('category'))
+ORDER BY posts.created_at DESC
+LIMIT $3 OFFSET $4;
+```
