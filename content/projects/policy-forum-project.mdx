@@ -775,9 +775,9 @@ With this final piece, we successfully fetch the authenticated user's profile fr
 
 ## Posts and Comments
 
-With authentication done, I moved on to the forum itself. The first step was the database schema for posts and comments. I'll skip the routine parts and focus on the one idea that turned into a genuine rabbit hole: optional filters.
+With authentication done, I moved on to the forum itself. The first step was the database schema for posts and comments. I'll skip the routine parts and focus on optional filters.
 
-I wanted posts to carry a category like environment or education, and I wanted users to filter the feed by category, by author, or by both at once. The naive way to support that is to write one query per combination of filters:
+I want posts to carry a category like environment or education, and I want users to be able to filter the feed by category, by author, or by both at once. The naive way to support that is to write one query per combination of filters:
 
 ```sql title="internal/store/queries/posts.sql"
 -- name: ListAllPosts :many
@@ -926,3 +926,5 @@ WHERE (sqlc.narg('category')::post_category IS NULL OR posts.category = sqlc.nar
 ORDER BY posts.created_at DESC
 LIMIT $3 OFFSET $4;
 ```
+
+> There will be more to cover in the next part
