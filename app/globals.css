@@ -198,6 +198,10 @@ diffs-container {
   body {
     @apply bg-background text-foreground;
   }
+  header {
+    /* or a dedicated class if you have other fixed bars */
+    margin-right: var(--removed-body-scroll-bar-size, 0px);
+  }
 }
 
 /* --- Syntax Highlighting & Line Numbers --- */
