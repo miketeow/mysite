@@ -927,4 +927,6 @@ ORDER BY posts.created_at DESC
 LIMIT $3 OFFSET $4;
 ```
 
-> There will be more to cover in the next part
+## Pagination with Offset, Limit and Cursor
+
+In most cases, when an application needs to render a lot of data, I cannot simply render 1000 items in a single page, it is a bad UX and UI. So I implement paginations so that the frontend can render somewhere around 20 to 30 items in a single page. This is mainly achieved through the sql query with the `OFFSET` and `LIMIT` clauses.
