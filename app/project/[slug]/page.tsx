@@ -4,15 +4,12 @@ import { notFound } from "next/navigation";
 
 import { Calendar, Globe, Hash, Layers } from "lucide-react";
 import { MDXRemote } from "next-mdx-remote/rsc";
-import rehypeSlug from "rehype-slug";
 
 import { SectionTitle } from "@/components/section-title";
 import { badgeVariants } from "@/components/ui/badge";
 import { getProjectBySlug, getProjects } from "@/lib/mdx";
-import { rehypeMermaid } from "@/lib/rehype-mermaid";
-import { remarkPierreCode } from "@/lib/remark-pierre-code";
+import { getMdxRenderOptions } from "@/lib/mdx-options";
 import { formatDate } from "@/lib/utils";
-import { getMDXComponents } from "@/mdx-components";
 import GithubIcon from "@/public/github.svg";
 
 type Params = Promise<{ slug: string }>;
@@ -155,16 +152,7 @@ export default async function ProjectPostPage({ params }: { params: Params }) {
 
       {/* MDX Content */}
       <article className="prose prose-slate prose-headings:font-semibold prose-a:text-blue-600 dark:prose-invert max-w-none pb-20 lg:pb-[80vh]">
-        <MDXRemote
-          source={content}
-          components={getMDXComponents()}
-          options={{
-            mdxOptions: {
-              remarkPlugins: [remarkPierreCode],
-              rehypePlugins: [rehypeSlug, rehypeMermaid],
-            },
-          }}
-        />
+        <MDXRemote source={content} {...getMdxRenderOptions()} />
       </article>
     </>
   );
