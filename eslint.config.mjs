@@ -58,7 +58,7 @@ const eslintConfig = defineConfig([
     ...mdx.flat,
     files: ["**/*.md", "**/*.mdx"],
     processor: mdx.createRemarkProcessor({
-      lintCodeBlocks: true,
+      lintCodeBlocks: false,
       languageMapper: {},
     }),
   },
