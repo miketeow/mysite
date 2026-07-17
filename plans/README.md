@@ -8,19 +8,46 @@ plan fully, honor its STOP conditions, and update its status row when done.
 
 ## Execution order & status
 
-| Plan | Title | Priority | Effort | Depends on | Status |
-|------|-------|----------|--------|------------|--------|
-| 001 | Fix broken `lint` script (MDX code-fence parse errors) | P1 | S | — | TODO |
-| 002 | Remove dead legacy code-highlighting pipeline | P1 | M | — | TODO |
-| 003 | Harden slug-to-filepath containment check | P1 | S | — | TODO |
-| 004 | Add error handling around `@pierre/diffs` preload calls | P1 | S | — | TODO |
-| 005 | Parallelize homepage data fetching with `Promise.all` | P1 | S | — | TODO |
-| 006 | Optimize hero avatar image via `next/image` | P1 | S | — | TODO |
-| 007 | Remove dead `@next/mdx` config and dependencies | P2 | S | 002 (same-file) | TODO |
-| 008 | Consolidate duplicate Radix dependency strategy | P2 | S | 002, 007 (same-file) | TODO |
-| 009 | Extract shared MDX render options helper | P2 | S | — | TODO |
-| 010 | Fix tag badge variant inconsistency | P2 | S | 009 (same-file) | TODO |
-| 011 | Fix stale CLAUDE.md layout claim + merge duplicate layouts | P2 | S | 002 (same-file) | TODO |
+| Plan | Title | Priority | Effort | Depends on | Suggested model | Status |
+|------|-------|----------|--------|------------|------------------|--------|
+| 001 | Fix broken `lint` script (MDX code-fence parse errors) | P1 | S | — | Sonnet | DONE |
+| 002 | Remove dead legacy code-highlighting pipeline | P1 | M | — | Opus | DONE |
+| 003 | Harden slug-to-filepath containment check | P1 | S | — | Opus | DONE |
+| 004 | Add error handling around `@pierre/diffs` preload calls | P1 | S | — | Sonnet | DONE |
+| 005 | Parallelize homepage data fetching with `Promise.all` | P1 | S | — | Sonnet | DONE |
+| 006 | Optimize hero avatar image via `next/image` | P1 | S | — | Sonnet | DONE |
+| 007 | Remove dead `@next/mdx` config and dependencies | P2 | S | 002 (same-file) | Sonnet | DONE |
+| 008 | Consolidate duplicate Radix dependency strategy | P2 | S | 002, 007 (same-file) | Sonnet | DONE |
+| 009 | Extract shared MDX render options helper | P2 | S | — | Sonnet | DONE |
+| 010 | Fix tag badge variant inconsistency | P2 | S | 009 (same-file) | Sonnet | DONE |
+| 011 | Fix stale CLAUDE.md layout claim + merge duplicate layouts | P2 | S | 002 (same-file) | Opus | DONE |
+
+### Model-choice rationale
+
+Heuristic: default to Sonnet — most of these plans hand the executor exact
+code to place, with narrow scope and machine-checkable done criteria, so
+there's little judgment left to exercise. Bump to Opus only where a plan asks
+the executor to *judge* something with real blast radius rather than just
+transcribe a diff:
+
+- **002** requires distinguishing live from dead code across six files
+  (including a ~130-line CSS block) purely from grep evidence, then
+  rewriting `CLAUDE.md` prose to match — several STOP conditions hinge on
+  correctly reading ambiguous grep output rather than following a fixed
+  recipe.
+- **003** is a security fix. The patch itself is small and given verbatim,
+  but path-containment bugs are exactly the kind of subtly-wrong-in-an-edge-
+  case mistake worth paying extra reasoning for, even at low nominal effort.
+- **011** requires verifying true structural/behavioral identity between two
+  files before merging them (not just diffing the text), and judging whether
+  `OnThisPage` secretly needs post-type-specific data — a wrong call here
+  silently breaks a page rather than failing a build.
+
+**Fable** isn't recommended for any plan yet — there's no track record for
+how it performs on this kind of scoped-executor task in this repo. If you
+want to calibrate it, try it on a Sonnet-tier plan (005 or 010 are the
+lowest-stakes) and compare its diff against what Sonnet would produce before
+trusting it on 002/003/011-tier work.
 
 ## Dependency notes
 
