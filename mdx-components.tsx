@@ -11,7 +11,6 @@ import { CodePatch } from "@/components/diff/code-patch";
 import { CodeTabs } from "@/components/diff/code-tabs";
 import { cn } from "@/lib/utils";
 
-import { CopyButton } from "./components/copy-button";
 import {
   Collapsible,
   CollapsibleContent,
@@ -179,54 +178,11 @@ export function getMDXComponents(): MDXComponents {
       );
     },
 
-    // NEW: Handle the Code Block Title
     figcaption: ({ children, ...props }: ComponentProps<"figcaption">) => {
-      // Guard: Only apply this style to rehype-pretty-code titles
-      if ("data-rehype-pretty-code-title" in props) {
-        return (
-          <figcaption
-            className={cn(
-              // Layout
-              "w-full border-b px-4 py-2.5",
-              // Typography
-              "mt-0!",
-              "text-muted-foreground font-mono text-xs font-medium",
-              // Colors (Subtle distinction from the code block background)
-              "border-border bg-zinc-50 dark:bg-zinc-900/50",
-              props.className
-            )}
-            {...props}
-          >
-            {/* We can add a File Icon here if we want to enforce it for all titles */}
-            {children}
-          </figcaption>
-        );
-      }
-
-      // Fallback for standard image captions
       return <figcaption {...props}>{children}</figcaption>;
     },
 
-    figure: ({
-      children,
-      ...props
-    }: ComponentProps<"figure"> & { "data-raw"?: string }) => {
-      // Check if this figure has the 'data-rehype-pretty-code-figure' attribute
-      if ("data-rehype-pretty-code-figure" in props) {
-        const rawCode = props["data-raw"] || "";
-
-        return (
-          <div className="group border-border relative my-6 overflow-hidden rounded-lg border">
-            {/* Pass children (the <pre>) directly */}
-            {children}
-
-            {/* Pass raw code to button */}
-            <CopyButton text={rawCode} />
-          </div>
-        );
-      }
-
-      // Default behavior for other figures (images etc)
+    figure: ({ children, ...props }: ComponentProps<"figure">) => {
       return <figure {...props}>{children}</figure>;
     },
     pre: ({ children, className, ...props }: ComponentProps<"pre">) => {
