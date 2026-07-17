@@ -51,8 +51,8 @@ export default function OnThisPage() {
 
       setLinks(generatedLinks);
       // set first item active initially if exists
-      if (generatedLinks.length > 0 && !activeId) {
-        setActiveId(generatedLinks[0].id);
+      if (generatedLinks.length > 0) {
+        setActiveId((prev) => prev || generatedLinks[0].id);
       }
       return true;
     };
@@ -191,7 +191,7 @@ export default function OnThisPage() {
                         ? "text-primary font-medium"
                         : "text-muted-foreground"
                     )}
-                    onClick={(e) => {
+                    onClick={() => {
                       // lock observer immediately if clicked
                       isClicking.current = true;
                       setActiveId(link.id);
