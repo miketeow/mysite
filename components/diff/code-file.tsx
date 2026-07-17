@@ -17,8 +17,9 @@ type Props = {
 // client File component for hydration (no plain-text flash). The header is always
 // shown so the copy button (rendered into the header slot) has a place to live.
 export async function CodeFile({ code, lang, name, showLineNumbers }: Props) {
+  let data: Awaited<ReturnType<typeof preloadFile>>;
   try {
-    const data = await preloadFile({
+    data = await preloadFile({
       file: {
         name: name ?? lang ?? "code",
         contents: code,
@@ -30,9 +31,9 @@ export async function CodeFile({ code, lang, name, showLineNumbers }: Props) {
         disableLineNumbers: showLineNumbers !== "true",
       },
     });
-
-    return <File {...data} copyText={code} />;
   } catch {
     return <CodeFallback code={code} lang={lang} name={name} />;
   }
+
+  return <File {...data} copyText={code} />;
 }

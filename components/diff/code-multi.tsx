@@ -19,8 +19,9 @@ const HIDE_STATS = "[data-deletions-count],[data-additions-count]{display:none}"
 // Compares two file versions. Authored via the ```multidiff fence, which the
 // remark-pierre-code plugin splits into oldCode/newCode.
 export async function CodeMultiDiff({ name, oldCode, newCode, oldName }: Props) {
+  let data: Awaited<ReturnType<typeof preloadMultiFileDiff<undefined>>>;
   try {
-    const data = await preloadMultiFileDiff({
+    data = await preloadMultiFileDiff({
       oldFile: { name: oldName ?? name, contents: oldCode },
       newFile: { name, contents: newCode },
       options: {
@@ -30,9 +31,9 @@ export async function CodeMultiDiff({ name, oldCode, newCode, oldName }: Props) 
         unsafeCSS: HIDE_STATS,
       },
     });
-
-    return <MultiFileDiff {...data} copyText={newCode} />;
   } catch {
     return <CodeFallback code={newCode} name={name} />;
   }
+
+  return <MultiFileDiff {...data} copyText={newCode} />;
 }

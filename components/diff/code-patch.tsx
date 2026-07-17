@@ -15,8 +15,9 @@ const HIDE_STATS = "[data-deletions-count],[data-additions-count]{display:none}"
 
 // Async server component: renders a unified diff/patch string via @pierre/diffs.
 export async function CodePatch({ patch }: Props) {
+  let data: Awaited<ReturnType<typeof preloadPatchDiff<undefined>>>;
   try {
-    const data = await preloadPatchDiff({
+    data = await preloadPatchDiff({
       patch,
       options: {
         theme: DIFFS_THEME,
@@ -25,9 +26,9 @@ export async function CodePatch({ patch }: Props) {
         unsafeCSS: HIDE_STATS,
       },
     });
-
-    return <PatchDiff {...data} copyText={patch} />;
   } catch {
     return <CodeFallback code={patch} name="patch" />;
   }
+
+  return <PatchDiff {...data} copyText={patch} />;
 }
