@@ -46,6 +46,15 @@ const eslintConfig = defineConfig([
   // 2. Tailwind CSS Rules
   ...tailwind.configs["flat/recommended"],
   {
+    settings: {
+      tailwindcss: {
+        // There's no tailwind.config.* file (Tailwind v4 uses CSS-first
+        // config via @theme in app/globals.css), so the plugin can't
+        // auto-resolve one — it'd otherwise console.warn on every file.
+        // {} matches its own fallback when resolution fails.
+        config: {},
+      },
+    },
     rules: {
       // FIX 2: Disable strict classname checking.
       // The plugin cannot read Tailwind v4 CSS variables yet.
