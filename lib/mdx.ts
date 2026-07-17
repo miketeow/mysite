@@ -33,6 +33,14 @@ export type BaseMetadata = z.infer<typeof BaseMetadataSchema>;
 
 const CONTENT_DIR = path.join(process.cwd(), "content");
 
+function resolveContentPath(baseDir: string, slug: string): string | null {
+  const filePath = path.join(baseDir, `${slug}.mdx`);
+  const resolved = path.resolve(filePath);
+  const resolvedBase = path.resolve(baseDir) + path.sep;
+  if (!resolved.startsWith(resolvedBase)) return null;
+  return resolved;
+}
+
 function getMDXFiles(dir: string) {
   return fs.readdirSync(dir).filter((file) => path.extname(file) === ".mdx");
 }
@@ -126,8 +134,9 @@ export const getPostsByTag = cache(async (tag: string) => {
 });
 
 export const getBlogPostBySlug = cache(async (slug: string) => {
-  const filePath = path.join(CONTENT_DIR, "blog", `${slug}.mdx`);
-  if (!fs.existsSync(filePath)) return null;
+  const blogDir = path.join(CONTENT_DIR, "blog");
+  const filePath = resolveContentPath(blogDir, slug);
+  if (!filePath || !fs.existsSync(filePath)) return null;
 
   const { data, content } = readMDXFile(filePath);
   return {
@@ -137,8 +146,9 @@ export const getBlogPostBySlug = cache(async (slug: string) => {
 });
 
 export const getProjectBySlug = cache(async (slug: string) => {
-  const filePath = path.join(CONTENT_DIR, "projects", `${slug}.mdx`);
-  if (!fs.existsSync(filePath)) return null;
+  const projectDir = path.join(CONTENT_DIR, "projects");
+  const filePath = resolveContentPath(projectDir, slug);
+  if (!filePath || !fs.existsSync(filePath)) return null;
 
   const { data, content } = readMDXFile(filePath);
   return {
