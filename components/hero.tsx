@@ -1,10 +1,11 @@
+import Image from "next/image";
 import Link from "next/link";
 
 import { siteConfig } from "@/config/site";
 import { cn } from "@/lib/utils";
 
 import { SectionTitle } from "./section-title";
-import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar";
+import { Avatar, AvatarFallback } from "./ui/avatar";
 
 const contactLinkStyles = cn(
   "text-sm font-medium uppercase tracking-wide", // Base text style: small, medium weight, uppercase, slightly spaced
@@ -51,9 +52,16 @@ export function Hero() {
       </div>
       <div className="relative">
         <Avatar className="size-16">
-          <AvatarImage src="/images/proflie.jpg" alt="profile" />
           <AvatarFallback>MT</AvatarFallback>
         </Avatar>
+        <Image
+          src="/images/proflie.jpg"
+          alt="profile"
+          width={64}
+          height={64}
+          priority
+          className="absolute inset-0 z-10 size-16 rounded-full object-cover"
+        />
       </div>
     </section>
   );
