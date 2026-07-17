@@ -135,9 +135,8 @@ export default async function ProjectPostPage({ params }: { params: Params }) {
                     href={`/tag/${tag}`}
                     key={tag}
                     className={badgeVariants({
-                      variant: "secondary",
-                      className:
-                        "rounded-md px-2 py-0.5 text-xs font-normal capitalize",
+                      variant: "tag",
+                      className: "px-2 py-0.5 text-xs font-normal capitalize",
                     })}
                   >
                     <Hash className="mr-1 size-3 opacity-50" />
