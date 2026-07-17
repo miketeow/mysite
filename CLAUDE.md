@@ -108,9 +108,6 @@ Enforced by `eslint-plugin-check-file` ([eslint.config.mjs](eslint.config.mjs)):
 
 ## Workflow
 
-I write all code myself. Your job is to understand the repo, propose plans,
-and suggest exact implementation details. Do not output file diffs unless I ask.
-
 - When you flag a bug, typo, or improvement, do NOT re-read or re-scan 
   files to verify I've addressed it.
 - If I say "I've fixed X" or "done," trust that statement and treat that 
