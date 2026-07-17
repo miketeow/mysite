@@ -98,9 +98,8 @@ blast radius of a content-authoring mistake.
 
 ## Git workflow
 
-- Branch: `advisor/004-diff-preload-error-handling`.
-- Single commit, message style matches `git log` (e.g.
-  `add error handling around @pierre/diffs preload calls`).
+- Make edits directly in the working tree on the current branch. Do not
+  create a new branch and do not commit.
 - Do NOT push or open a PR unless explicitly instructed.
 
 ## Steps

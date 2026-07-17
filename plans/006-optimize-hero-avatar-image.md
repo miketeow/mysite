@@ -105,9 +105,8 @@ is also the first precedent for the pattern in this repo.
 
 ## Git workflow
 
-- Branch: `advisor/006-optimize-hero-avatar`.
-- Single commit, message style matches `git log` (e.g.
-  `render hero avatar through next/image for LCP/CLS`).
+- Make edits directly in the working tree on the current branch. Do not
+  create a new branch and do not commit.
 - Do NOT push or open a PR unless explicitly instructed.
 
 ## Steps

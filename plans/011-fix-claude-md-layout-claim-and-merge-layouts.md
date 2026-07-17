@@ -80,10 +80,8 @@ real.
 
 ## Git workflow
 
-- Branch: `advisor/011-merge-duplicate-layouts`.
-- Two commits is reasonable here: one for the CLAUDE.md doc fix (can land
-  even if the merge step is deferred — see STOP conditions), one for the
-  layout consolidation. A single commit is also fine if you prefer.
+- Make edits directly in the working tree on the current branch. Do not
+  create a new branch and do not commit.
 - Do NOT push or open a PR unless explicitly instructed.
 
 ## Steps

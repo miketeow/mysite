@@ -67,9 +67,8 @@ matching the convention already established elsewhere in the codebase.
 
 ## Git workflow
 
-- Branch: `advisor/005-homepage-parallel-fetch`.
-- Single commit, message style matches `git log` (e.g.
-  `parallelize homepage getBlogPosts/getProjects fetch`).
+- Make edits directly in the working tree on the current branch. Do not
+  create a new branch and do not commit.
 - Do NOT push or open a PR unless explicitly instructed.
 
 ## Steps

@@ -86,9 +86,8 @@ entirely: change the pipeline once, both routes pick it up.
 
 ## Git workflow
 
-- Branch: `advisor/009-extract-shared-mdx-options`.
-- Single commit, message style matches `git log` (e.g.
-  `extract shared MDXRemote options for blog/project pages`).
+- Make edits directly in the working tree on the current branch. Do not
+  create a new branch and do not commit.
 - Do NOT push or open a PR unless explicitly instructed.
 
 ## Steps

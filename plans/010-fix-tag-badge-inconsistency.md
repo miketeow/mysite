@@ -121,9 +121,8 @@ variant fixes the inconsistency.
 
 ## Git workflow
 
-- Branch: `advisor/010-fix-tag-badge-variant`.
-- Single commit, message style matches `git log` (e.g.
-  `use tag badge variant consistently on project pages`).
+- Make edits directly in the working tree on the current branch. Do not
+  create a new branch and do not commit.
 - Do NOT push or open a PR unless explicitly instructed.
 
 ## Steps

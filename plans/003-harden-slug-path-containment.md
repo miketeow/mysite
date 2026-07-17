@@ -100,9 +100,8 @@ reason to leave the gap open — the fix is a few lines and removes any doubt.
 
 ## Git workflow
 
-- Branch: `advisor/003-harden-slug-containment`.
-- Single commit, message style matches `git log` (e.g.
-  `harden getBlogPostBySlug/getProjectBySlug against path traversal`).
+- Make edits directly in the working tree on the current branch. Do not
+  create a new branch and do not commit.
 - Do NOT push or open a PR unless explicitly instructed.
 
 ## Steps

@@ -96,9 +96,8 @@ entirely.
 
 ## Git workflow
 
-- Branch: `advisor/008-consolidate-radix`.
-- Single commit, message style matches `git log` (e.g.
-  `standardize on individual @radix-ui/react-* packages, drop meta-package`).
+- Make edits directly in the working tree on the current branch. Do not
+  create a new branch and do not commit.
 - Do NOT push or open a PR unless explicitly instructed.
 
 ## Steps

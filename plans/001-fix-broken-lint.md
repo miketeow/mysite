@@ -92,11 +92,8 @@ it. Fixing this restores `lint` as a trustworthy signal.
 
 ## Git workflow
 
-- Branch: `advisor/001-fix-broken-lint` (or match whatever branch-naming
-  convention is already in use in this repo — check `git branch -a` first;
-  if none is evident, this name is fine).
-- Single commit, message style matches `git log` (short imperative subject,
-  lowercase, no period — e.g. `fix eslint lint script failing on mdx code fences`).
+- Make edits directly in the working tree on the current branch. Do not
+  create a new branch and do not commit.
 - Do NOT push or open a PR unless explicitly instructed.
 
 ## Steps

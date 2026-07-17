@@ -110,9 +110,8 @@ to decide inside a cleanup plan).
 
 ## Git workflow
 
-- Branch: `advisor/007-remove-next-mdx`.
-- Single commit, message style matches `git log` (e.g.
-  `remove unused @next/mdx wiring and dependencies`).
+- Make edits directly in the working tree on the current branch. Do not
+  create a new branch and do not commit.
 - Do NOT push or open a PR unless explicitly instructed.
 
 ## Steps

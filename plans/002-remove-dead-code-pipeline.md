@@ -198,11 +198,8 @@ keeps three unused npm packages (`rehype-pretty-code`, `@shikijs/transformers`,
 
 ## Git workflow
 
-- Branch: `advisor/002-remove-dead-pipeline`.
-- Commit per logical unit is fine (e.g. one commit for the TS/TSX removal,
-  one for the CSS removal, one for `package.json` + CLAUDE.md), or a single
-  commit — match whatever granularity feels natural, this repo doesn't show
-  a strong convention either way in its history.
+- Make edits directly in the working tree on the current branch. Do not
+  create a new branch and do not commit.
 - Do NOT push or open a PR unless explicitly instructed.
 
 ## Steps
