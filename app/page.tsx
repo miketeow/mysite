@@ -9,8 +9,12 @@ import { getBlogPosts, getProjects } from "@/lib/mdx";
 import { formatDate } from "@/lib/utils";
 
 export default async function Home() {
-  const latestBlogPosts = (await getBlogPosts()).slice(0, 4);
-  const featuredProjects = (await getProjects()).slice(0, 2);
+  const [blogPosts, projects] = await Promise.all([
+    getBlogPosts(),
+    getProjects(),
+  ]);
+  const latestBlogPosts = blogPosts.slice(0, 4);
+  const featuredProjects = projects.slice(0, 2);
   return (
     <div className="py-20">
       <div className="container max-w-6xl space-y-28">
