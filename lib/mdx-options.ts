@@ -1,4 +1,5 @@
 import rehypeSlug from "rehype-slug";
+import remarkGfm from "remark-gfm";
 
 import { rehypeMermaid } from "@/lib/rehype-mermaid";
 import { remarkPierreCode } from "@/lib/remark-pierre-code";
@@ -11,7 +12,7 @@ export function getMdxRenderOptions() {
     components: getMDXComponents(),
     options: {
       mdxOptions: {
-        remarkPlugins: [remarkPierreCode],
+        remarkPlugins: [remarkGfm, remarkPierreCode],
         rehypePlugins: [rehypeSlug, rehypeMermaid],
       },
     },
