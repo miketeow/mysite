@@ -100,7 +100,6 @@ Enforced by `eslint-plugin-check-file` ([eslint.config.mjs](eslint.config.mjs)):
 <!-- NOTES / UNCERTAINTIES
 - I didn't find a tailwind.config.{ts,js,mjs} file. Tailwind v4 supports CSS-first config via @theme, and globals.css uses it, so this appears intentional rather than missing.
 - `bun.lock` is present and the README mentions bun, but package.json `scripts` only invoke `next` directly. I did not find a project-level statement that bun is required vs. npm/pnpm — calling it the package manager based on the committed lockfile only.
-- @next/mdx is installed and wired in next.config.ts, and `pageExtensions` includes `mdx`, so .mdx files in `app/` *could* become routes — but none currently exist. All MDX rendering goes through next-mdx-remote/rsc instead. I'm noting this rather than declaring which is "the" pattern.
 -->
 
 ## What to avoid

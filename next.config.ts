@@ -1,10 +1,6 @@
 import type { NextConfig } from "next";
 
-import createMDX from "@next/mdx";
-
 const nextConfig: NextConfig = {
-  /* config options here */
-
   turbopack: {
     rules: {
       "*.svg": {
@@ -13,9 +9,7 @@ const nextConfig: NextConfig = {
       },
     },
   },
-  pageExtensions: ["ts", "tsx", "js", "jsx", "mdx"],
+  pageExtensions: ["ts", "tsx", "js", "jsx"],
 };
 
-const withMDX = createMDX({});
-
-export default withMDX(nextConfig);
+export default nextConfig;
